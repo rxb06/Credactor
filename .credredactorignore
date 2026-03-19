@@ -1,0 +1,2 @@
+# Prevent the tool from redacting its own test suite
+tests/*.py
