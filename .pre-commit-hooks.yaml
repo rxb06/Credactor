@@ -1,0 +1,8 @@
+- id: credactor
+  name: credactor
+  description: Scan staged files for hardcoded credentials.
+  entry: credactor --staged
+  language: python
+  types: [text]
+  stages: [pre-commit]
+  pass_filenames: false

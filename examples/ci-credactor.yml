@@ -1,0 +1,26 @@
+# GitHub Actions workflow template for Credactor
+# Copy this file to .github/workflows/credactor.yml in your repository.
+
+name: Credential Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Credactor
+        run: pip install credactor
+
+      - name: Scan for credentials
+        run: credactor .

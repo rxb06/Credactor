@@ -86,6 +86,7 @@ Values: placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `
 - [Setup Guide](docs/setup.md) — install, config, CI
 - [User Guide](docs/user-guide.md) — CLI reference, feature walkthrough
 - [Examples](docs/examples.md) — common workflows
+- [Integration](docs/integration.md) — pre-commit hooks, CI setup
 - [Disclaimer](docs/DISCLAIMER.md) — limitations, safe usage, warranty
 
 ## Transparancy over AI Usage

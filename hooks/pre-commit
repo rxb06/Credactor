@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Credactor pre-commit hook (standalone, no framework required)
+# Install: cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -euo pipefail
+
+if ! command -v credactor &>/dev/null; then
+    echo "credactor not found. Install with: pip install credactor" >&2
+    exit 1
+fi
+
+credactor --staged
