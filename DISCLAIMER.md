@@ -1,0 +1,63 @@
+# Disclaimer
+
+## What Credactor is
+
+Credactor is a static analysis tool that uses regex patterns and entropy heuristics to find hardcoded credentials in source files. It is a **developer aid**, not a security guarantee.
+
+## What Credactor is NOT
+
+- Not a replacement for secret management (use Vault, AWS Secrets Manager, 1Password, etc.)
+- Not a runtime security tool — it scans files at rest, not live applications
+- Not a compliance certification tool
+- Not guaranteed to catch every credential format or encoding
+
+## Limitations
+
+### Detection
+
+- **Regex-based.** Credactor matches known patterns (AWS keys, GitHub tokens, JWTs, etc.) and heuristics (entropy, variable names). Novel or obfuscated credential formats will be missed.
+- **No binary support.** Only text files are scanned. Credentials in compiled binaries, images, archives, or encrypted blobs are invisible.
+- **No cross-file tracking.** A credential split across two files (e.g., key in one, secret in another) is not detected.
+- **Entropy thresholds are tunable, not perfect.** Lowering them catches more but increases false positives. The defaults balance precision and recall for common codebases.
+- **No semantic analysis.** The tool does not understand code execution flow. A credential constructed at runtime from multiple variables will not be detected.
+
+### Redaction
+
+- **Destructive operation.** `--fix-all` modifies files in place. While backups are created by default (`.bak` files), a crash or disk failure during replacement could still cause data loss.
+- **Backup files contain secrets.** `.bak` files are unencrypted copies of the original file with the credential intact. Delete them securely after verifying replacements.
+- **No undo.** Once a replacement is made, the only recovery is from `.bak` files or version control. There is no built-in rollback.
+- **Replacement may break code.** Sentinel values (`REDACTED_BY_CREDACTOR`) will cause runtime failures. This is intentional — a loud failure is safer than a silent wrong credential — but verify before deploying.
+
+### False positives
+
+- High-entropy strings that aren't credentials (hashes, UUIDs, encoded data) may be flagged.
+- Variable names matching credential patterns with non-secret values may trigger.
+- Use `.credactorignore`, inline `# credactor:ignore` comments, or `.credactor.toml` to suppress known false positives.
+
+### False negatives
+
+- Credentials in formats not covered by built-in patterns.
+- Credentials below the entropy threshold.
+- Values shorter than the minimum length (default 8 characters).
+- Credentials in binary, CSV, PDF, or other non-scanned file types.
+- Base64-encoded or otherwise obfuscated credentials.
+
+## Safe usage
+
+1. **Always run `--dry-run` first** to review findings before any modification.
+2. **Keep backups enabled** (the default). Only use `--no-backup` when files are committed to version control.
+3. **Review findings before redacting.** Not every finding is a real credential. Use interactive mode (the default) to decide per-finding.
+4. **Rotate leaked credentials.** Redacting a credential from source code does not revoke it. The credential is still valid until rotated at the provider.
+5. **Clean git history.** If a credential was committed, removing it from the working tree is not enough. Use `git filter-repo` or BFG Repo Cleaner to rewrite history.
+6. **Delete .bak files securely** after verifying replacements. They contain the original secrets in plaintext.
+7. **Do not rely on Credactor alone.** Use it alongside GitHub Secret Scanning, pre-commit hooks, and a secrets manager for defense in depth.
+
+## Warranty
+
+This software is provided "as is" under the Apache 2.0 license, without warranty of any kind. See [LICENSE](LICENSE) for the full terms.
+
+The authors are not liable for:
+- Credentials missed by the scanner
+- Code broken by replacements
+- Data loss from file modification
+- Security incidents resulting from reliance on this tool as a sole control

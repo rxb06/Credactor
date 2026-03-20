@@ -11,6 +11,7 @@ import os
 import shutil
 import stat
 import sys
+import tempfile
 from pathlib import Path
 
 from .config import Config
@@ -169,12 +170,21 @@ def batch_replace_in_file(
         lines[idx] = original.replace(full_value, replacement, 1)
         replaced += 1
 
-    # Write back
+    # Atomic write: write to temp file, then rename over original.
+    # Prevents corruption if process crashes mid-write.
+    dir_name = os.path.dirname(filepath) or '.'
     try:
-        with open(filepath, 'w', encoding=encoding, errors='surrogateescape') as fh:
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.credactor.tmp')
+        with os.fdopen(fd, 'w', encoding=encoding, errors='surrogateescape') as fh:
             fh.writelines(lines)
+        os.replace(tmp_path, filepath)
     except (OSError, PermissionError) as exc:
         print(f'  [ERROR] Cannot write {filepath}: {exc}', file=sys.stderr)
+        # Clean up temp file if it still exists
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         return 0, len(file_findings)
 
     # Restore original file permissions
@@ -246,7 +256,10 @@ def interactive_review(
             try:
                 answer = input("  Replace? [y/N]: ").strip().lower()
             except (KeyboardInterrupt, EOFError):
-                print('\n\n  Interrupted -- no further changes made.')
+                print(f'\n\n  Interrupted — {replaced} file(s) already '
+                      f'modified. No further changes will be made.')
+                if replaced and not config.no_backup:
+                    print('  .bak backups exist for modified files.')
                 _print_summary(replaced, skipped, total)
                 return total - replaced
 

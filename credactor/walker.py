@@ -119,11 +119,12 @@ def _parallel_scan(
             with lock:
                 done_count += 1
                 progress(done_count)
-            try:
-                all_findings.extend(future.result())
-            except Exception as exc:
-                fp = future_to_file[future]
-                print(f'[WARN] Error scanning {fp}: {exc}', file=sys.stderr)
+                try:
+                    all_findings.extend(future.result())
+                except Exception as exc:
+                    fp = future_to_file[future]
+                    print(f'[WARN] Error scanning {fp}: {exc}',
+                          file=sys.stderr)
 
     return all_findings
 

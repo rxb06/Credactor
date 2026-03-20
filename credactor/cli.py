@@ -124,6 +124,17 @@ def main(argv: list[str] | None = None) -> None:
         print(f'Error: path not found: {target}', file=sys.stderr)
         sys.exit(2)
 
+    # Guard against scanning system directories
+    _PROTECTED_DIRS = {'/', '/etc', '/usr', '/var', '/boot', '/sys', '/proc',
+                       '/bin', '/sbin', '/lib', '/opt', '/root',
+                       'C:\\', 'C:\\Windows', 'C:\\Program Files'}
+    resolved = str(Path(target).resolve())
+    if resolved in _PROTECTED_DIRS:
+        print(f'Error: refusing to scan system directory: {resolved}',
+              file=sys.stderr)
+        print('  Use a project directory instead.', file=sys.stderr)
+        sys.exit(2)
+
     file_data = load_config_file(target, config.config_path)
     if file_data:
         apply_config_file(config, file_data)
@@ -186,7 +197,25 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     if config.fix_all:
-        # #33 — batch replace all
+        # Confirmation before destructive batch operation
+        by_file: dict[str, list] = {}
+        for f in findings:
+            by_file.setdefault(f['file'], []).append(f)
+        print(f'\n  --fix-all will modify {len(by_file)} file(s) '
+              f'with {len(findings)} replacement(s).')
+        if not config.no_backup:
+            print('  .bak backups will be created (contain original secrets).')
+        else:
+            print('  WARNING: --no-backup is set. No backups will be created.')
+        try:
+            answer = input('  Proceed? [y/N]: ').strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print('\n  Aborted.')
+            sys.exit(1)
+        if answer not in ('y', 'yes'):
+            print('  Aborted.')
+            sys.exit(1)
+
         unresolved = fix_all(findings, target, config)
         sys.exit(1 if unresolved > 0 else 0)
 
