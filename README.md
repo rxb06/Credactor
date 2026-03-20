@@ -86,7 +86,11 @@ Values: placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `
 - [Setup Guide](docs/setup.md) — install, config, CI
 - [User Guide](docs/user-guide.md) — CLI reference, feature walkthrough
 - [Examples](docs/examples.md) — common workflows
-- [Disclaimer](DISCLAIMER.md) — limitations, safe usage, warranty
+- [Disclaimer](docs/DISCLAIMER.md) — limitations, safe usage, warranty
+
+## Transparancy over AI Usage
+AI was used for code review, bug fixes, security auditing, and documentation structuring for the project. 
+All output was reviewed and validated manually.
 
 ## License
 
