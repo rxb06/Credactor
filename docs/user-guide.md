@@ -4,11 +4,11 @@
 
 ```bash
 # Scan current directory
-python -m credredactor
+python -m credactor
 
 # Scan a specific path
-python -m credredactor /path/to/project
-python -m credredactor src/config.py
+python -m credactor /path/to/project
+python -m credactor src/config.py
 ```
 
 In interactive mode each finding is shown and you choose whether to redact it:
@@ -47,7 +47,7 @@ In interactive mode each finding is shown and you choose whether to redact it:
 
 | Flag | What it does |
 |---|---|
-| `--replace-with sentinel` | Use `REDACTED_BY_CREDREDACTOR` (default) |
+| `--replace-with sentinel` | Use `REDACTED_BY_CREDACTOR` (default) |
 | `--replace-with env` | Language-appropriate env var lookup |
 | `--replace-with custom` | Use your own string |
 | `--replacement STRING` | The custom string |
@@ -68,7 +68,7 @@ In interactive mode each finding is shown and you choose whether to redact it:
 # Before
 api_key = "sk_live_abc123def456"
 # After
-api_key = "REDACTED_BY_CREDREDACTOR"
+api_key = "REDACTED_BY_CREDACTOR"
 ```
 
 Fails loudly at runtime instead of silently passing a wrong value.
@@ -115,7 +115,7 @@ API_KEY=${API_KEY}
 ### Custom
 
 ```bash
-python -m credredactor --replace-with custom --replacement "TODO_REPLACE_ME"
+python -m credactor --replace-with custom --replacement "TODO_REPLACE_ME"
 ```
 
 ## Severity
@@ -131,20 +131,20 @@ python -m credredactor --replace-with custom --replacement "TODO_REPLACE_ME"
 
 ### Inline
 
-Append `credredactor:ignore` in any comment style:
+Append `credactor:ignore` in any comment style:
 
 ```python
-test_key = "abc123"  # credredactor:ignore
+test_key = "abc123"  # credactor:ignore
 ```
 
 ```xml
-<!-- credredactor:ignore -->
+<!-- credactor:ignore -->
 <add key="Password" value="test_only" />
 ```
 
 ### Allowlist
 
-`.credredactorignore` supports three entry types:
+`.credactorignore` supports three entry types:
 
 ```
 # Glob patterns — suppress entire files
@@ -220,4 +220,4 @@ These are treated as safe automatically:
 - Function definitions: `def get_password(self, password="default"):`
 - Low-entropy values (below 3.5 bits/char by default)
 - Short values (under 8 characters)
-- Already-redacted values: `REDACTED_BY_CREDREDACTOR`
+- Already-redacted values: `REDACTED_BY_CREDACTOR`

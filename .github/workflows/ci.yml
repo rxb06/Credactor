@@ -29,7 +29,7 @@ jobs:
         run: pip install pytest ruff
 
       - name: Lint
-        run: ruff check credredactor/ tests/
+        run: ruff check credactor/ tests/
 
       - name: Test
         run: pytest tests/ -v
@@ -44,7 +44,7 @@ jobs:
           python-version: "3.13"
 
       - name: Scan for credentials
-        run: python -m credredactor --ci --format sarif . > results.sarif
+        run: python -m credactor --ci --format sarif . > results.sarif
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4

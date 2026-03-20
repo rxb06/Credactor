@@ -1,5 +1,5 @@
 """
-Configuration loading from ``.credredactor.toml`` files.
+Configuration loading from ``.credactor.toml`` files.
 
 Addresses: #25 (config file support)
 """
@@ -36,29 +36,29 @@ class Config:
     no_backup: bool = False
     no_color: bool = False
     replace_mode: str = 'sentinel'  # 'sentinel' | 'env' | 'custom'
-    custom_replacement: str = 'REDACTED_BY_CREDREDACTOR'
+    custom_replacement: str = 'REDACTED_BY_CREDACTOR'
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'
     target: str = '.'
     config_path: Optional[str] = None
 
 
 def load_config_file(root: str, explicit_path: Optional[str] = None) -> dict:
-    """Load a .credredactor.toml config file and return the raw dict.
+    """Load a .credactor.toml config file and return the raw dict.
 
-    Searches for .credredactor.toml in root, then parent dirs up to /.
+    Searches for .credactor.toml in root, then parent dirs up to /.
     If explicit_path is given, only that path is tried.
     """
     if explicit_path:
         candidates = [Path(explicit_path)]
     else:
         # HIGH-06: Limit traversal depth to prevent picking up config files
-        # from shared parent directories (e.g. /tmp/.credredactor.toml).
+        # from shared parent directories (e.g. /tmp/.credactor.toml).
         # Walk up at most 5 levels — enough for monorepo nesting.
         max_depth = 5
         candidates = []
         p = Path(root).resolve()
         for _ in range(max_depth):
-            candidates.append(p / '.credredactor.toml')
+            candidates.append(p / '.credactor.toml')
             if p.parent == p:
                 break
             p = p.parent

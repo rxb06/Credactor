@@ -35,7 +35,7 @@ uv.lock
 .mypy_cache/
 .ruff_cache/
 
-# Backup files created by credredactor
+# Backup files created by credactor
 *.bak
 
 # Claude Code

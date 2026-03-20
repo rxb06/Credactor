@@ -2,18 +2,18 @@
 
 import os
 
-from credredactor.suppressions import AllowList, has_inline_suppression
+from credactor.suppressions import AllowList, has_inline_suppression
 
 
 class TestInlineSuppression:
     def test_hash_comment(self):
-        assert has_inline_suppression('api_key = "secret"  # credredactor:ignore')
+        assert has_inline_suppression('api_key = "secret"  # credactor:ignore')
 
     def test_slash_comment(self):
-        assert has_inline_suppression('const key = "secret"; // credredactor:ignore')
+        assert has_inline_suppression('const key = "secret"; // credactor:ignore')
 
     def test_case_insensitive(self):
-        assert has_inline_suppression('key = "val"  # CREDREDACTOR:IGNORE')
+        assert has_inline_suppression('key = "val"  # CREDACTOR:IGNORE')
 
     def test_no_suppression(self):
         assert not has_inline_suppression('api_key = "secret"  # important')
@@ -21,8 +21,8 @@ class TestInlineSuppression:
 
 class TestAllowList:
     def test_file_glob_suppression(self, tmp_dir):
-        # Create .credredactorignore
-        ignore_path = os.path.join(tmp_dir, '.credredactorignore')
+        # Create .credactorignore
+        ignore_path = os.path.join(tmp_dir, '.credactorignore')
         with open(ignore_path, 'w') as f:
             f.write('test_fixtures/*.py\n')
 
@@ -38,7 +38,7 @@ class TestAllowList:
         assert al.is_file_suppressed(fixture_file)
 
     def test_file_line_suppression(self, tmp_dir):
-        ignore_path = os.path.join(tmp_dir, '.credredactorignore')
+        ignore_path = os.path.join(tmp_dir, '.credactorignore')
         with open(ignore_path, 'w') as f:
             f.write('config.py:42\n')
 
@@ -48,7 +48,7 @@ class TestAllowList:
         assert not al.is_line_suppressed(config_file, 43)
 
     def test_value_literal_suppression(self, tmp_dir):
-        ignore_path = os.path.join(tmp_dir, '.credredactorignore')
+        ignore_path = os.path.join(tmp_dir, '.credactorignore')
         with open(ignore_path, 'w') as f:
             f.write('test_fixture_value_abc123\n')
 
@@ -64,7 +64,7 @@ class TestAllowList:
         assert not al.is_value_suppressed('anything')
 
     def test_combined_check(self, tmp_dir):
-        ignore_path = os.path.join(tmp_dir, '.credredactorignore')
+        ignore_path = os.path.join(tmp_dir, '.credactorignore')
         with open(ignore_path, 'w') as f:
             f.write('src/config.py:10\n')
 

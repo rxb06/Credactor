@@ -5,7 +5,7 @@
 Check for leaks before starting work:
 
 ```bash
-python -m credredactor --dry-run /path/to/project
+python -m credactor --dry-run /path/to/project
 ```
 
 Shows findings without touching files.
@@ -42,7 +42,7 @@ Scanning: /path/to/project
 Review each finding and decide:
 
 ```bash
-python -m credredactor /path/to/project
+python -m credactor /path/to/project
 ```
 
 ```
@@ -62,7 +62,7 @@ Creates `.bak` backups for every modified file.
 Fix everything in one shot:
 
 ```bash
-python -m credredactor --fix-all /path/to/project
+python -m credactor --fix-all /path/to/project
 ```
 
 ```
@@ -75,7 +75,7 @@ python -m credredactor --fix-all /path/to/project
 ## 4. Replace with env vars
 
 ```bash
-python -m credredactor --fix-all --replace-with env /path/to/project
+python -m credactor --fix-all --replace-with env /path/to/project
 ```
 
 Before:
@@ -99,14 +99,14 @@ Language-aware — `.js` gets `process.env.AWS_KEY`, `.go` gets `os.Getenv("AWS_
 Scan only staged files:
 
 ```bash
-python -m credredactor --staged --ci
+python -m credactor --staged --ci
 ```
 
 `.git/hooks/pre-commit`:
 
 ```bash
 #!/bin/sh
-python -m credredactor --staged --ci
+python -m credactor --staged --ci
 ```
 
 Or with the pre-commit framework:
@@ -115,9 +115,9 @@ Or with the pre-commit framework:
 repos:
   - repo: local
     hooks:
-      - id: credredactor
-        name: credredactor
-        entry: python -m credredactor --staged --ci
+      - id: credactor
+        name: credactor
+        entry: python -m credactor --staged --ci
         language: python
         pass_filenames: false
         always_run: true
@@ -147,14 +147,14 @@ Fail on findings:
 
 ```yaml
 - name: Credential scan
-  run: python -m credredactor --ci .
+  run: python -m credactor --ci .
 ```
 
 Upload SARIF to Code Scanning:
 
 ```yaml
 - name: Credential scan
-  run: python -m credredactor --ci --format sarif . > results.sarif
+  run: python -m credactor --ci --format sarif . > results.sarif
   continue-on-error: true
 
 - name: Upload SARIF
@@ -167,7 +167,7 @@ Save JSON as artifact:
 
 ```yaml
 - name: Credential scan
-  run: python -m credredactor --ci --format json . > credential-report.json
+  run: python -m credactor --ci --format json . > credential-report.json
 
 - name: Upload report
   uses: actions/upload-artifact@v4
@@ -182,7 +182,7 @@ Save JSON as artifact:
 Find credentials in past commits (even if already removed from working tree):
 
 ```bash
-python -m credredactor --scan-history .
+python -m credactor --scan-history .
 ```
 
 ```
@@ -202,12 +202,12 @@ Inline:
 
 ```python
 def test_api_validates_key():
-    fake_key = "AKIAIOSFODNN7EXAMPLE"  # credredactor:ignore
+    fake_key = "AKIAIOSFODNN7EXAMPLE"  # credactor:ignore
     response = client.post("/auth", headers={"X-API-Key": fake_key})
     assert response.status_code == 200
 ```
 
-Allowlist (`.credredactorignore`):
+Allowlist (`.credactorignore`):
 
 ```
 # Test fixtures
@@ -227,10 +227,10 @@ JSON is excluded by default (API responses cause too many false positives).
 
 ```bash
 # CI — scan all JSON
-python -m credredactor --ci --scan-json .
+python -m credactor --ci --scan-json .
 
 # Interactive — pick which ones
-python -m credredactor --scan-json .
+python -m credactor --scan-json .
 ```
 
 Interactive selection:
@@ -250,7 +250,7 @@ Interactive selection:
 
 ## 10. Team config
 
-`.credredactor.toml`:
+`.credactor.toml`:
 
 ```toml
 entropy_threshold = 3.0

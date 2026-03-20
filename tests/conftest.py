@@ -1,11 +1,11 @@
-"""Shared fixtures for CredRedactor tests."""
+"""Shared fixtures for Credactor tests."""
 
 import os
 import tempfile
 
 import pytest
 
-from credredactor.config import Config
+from credactor.config import Config
 
 
 @pytest.fixture

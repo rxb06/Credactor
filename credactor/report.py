@@ -179,7 +179,7 @@ def sarif_report(findings: list[dict], root: str) -> str:
         'runs': [{
             'tool': {
                 'driver': {
-                    'name': 'CredRedactor',
+                    'name': 'Credactor',
                     'version': __version__,
                     'rules': list(rules.values()),
                 },

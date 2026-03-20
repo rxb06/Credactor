@@ -13,13 +13,13 @@ test: ## Run tests
 	python -m pytest tests/ -v
 
 lint: ## Run linter
-	ruff check credredactor/ tests/
+	ruff check credactor/ tests/
 
-scan: ## Run credredactor on the project
-	python -m credredactor --dry-run .
+scan: ## Run credactor on the project
+	python -m credactor --dry-run .
 
-scan-fix: ## Run credredactor and fix all findings
-	python -m credredactor --fix-all .
+scan-fix: ## Run credactor and fix all findings
+	python -m credactor --fix-all .
 
 clean: ## Remove build artifacts
 	rm -rf build/ dist/ *.egg-info .pytest_cache .ruff_cache __pycache__

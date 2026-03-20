@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "credredactor"
+name = "credactor"
 version = "2.0.0"
 description = "Scan and redact hardcoded credentials in source code"
 readme = "README.md"
@@ -34,13 +34,13 @@ dev = [
 ]
 
 [project.scripts]
-credredactor = "credredactor.cli:main"
+credactor = "credactor.cli:main"
 
 [project.urls]
-Repository = "https://github.com/Rx/CredRedactor"
+Repository = "https://github.com/rxb06/Credactor"
 
 [tool.setuptools.packages.find]
-include = ["credredactor*"]
+include = ["credactor*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

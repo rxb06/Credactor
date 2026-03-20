@@ -9,9 +9,9 @@
 
 ```bash
 git clone <repo-url>
-cd CredRedactor
+cd Credactor
 
-python -m credredactor --help
+python -m credactor --help
 # or
 python credential_redactor.py --help
 ```
@@ -34,10 +34,10 @@ pip install tomli
 
 ## Config File
 
-`.credredactor.toml` in your project root (or any parent directory). The tool walks upward from the scan target to find it.
+`.credactor.toml` in your project root (or any parent directory). The tool walks upward from the scan target to find it.
 
 ```toml
-# .credredactor.toml
+# .credactor.toml
 
 entropy_threshold = 3.5    # Shannon entropy floor
 min_value_length = 8       # Ignore shorter values
@@ -52,13 +52,13 @@ extra_extensions = [".env.encrypted"]
 # Values to never flag
 extra_safe_values = ["test_fixture_token_abc123"]
 
-replacement = "REDACTED_BY_CREDREDACTOR"
+replacement = "REDACTED_BY_CREDACTOR"
 ```
 
 Override path:
 
 ```bash
-python -m credredactor --config /path/to/.credredactor.toml .
+python -m credactor --config /path/to/.credactor.toml .
 ```
 
 ## Suppression
@@ -66,16 +66,16 @@ python -m credredactor --config /path/to/.credredactor.toml .
 ### Inline
 
 ```python
-api_key = "test_key_for_unit_tests"  # credredactor:ignore
+api_key = "test_key_for_unit_tests"  # credactor:ignore
 ```
 
 ```javascript
-const key = "test_key";  // credredactor:ignore
+const key = "test_key";  // credactor:ignore
 ```
 
 ### Allowlist
 
-`.credredactorignore` in your project root:
+`.credactorignore` in your project root:
 
 ```
 # Glob patterns
@@ -98,9 +98,9 @@ With the `pre-commit` framework:
 repos:
   - repo: local
     hooks:
-      - id: credredactor
-        name: credredactor
-        entry: python -m credredactor --staged --ci
+      - id: credactor
+        name: credactor
+        entry: python -m credactor --staged --ci
         language: python
         pass_filenames: false
         always_run: true
@@ -110,7 +110,7 @@ Or manually in `.git/hooks/pre-commit`:
 
 ```bash
 #!/bin/sh
-python -m credredactor --staged --ci
+python -m credactor --staged --ci
 ```
 
 `--ci` exits 1 on findings, blocking the commit. Exit 0 means clean.
@@ -121,7 +121,7 @@ python -m credredactor --staged --ci
 
 ```yaml
 - name: Credential scan
-  run: python -m credredactor --ci --format sarif . > results.sarif
+  run: python -m credactor --ci --format sarif . > results.sarif
 
 - name: Upload SARIF
   uses: github/codeql-action/upload-sarif@v3
@@ -134,7 +134,7 @@ python -m credredactor --staged --ci
 ```yaml
 credential-scan:
   script:
-    - python -m credredactor --ci --format json . > credential-report.json
+    - python -m credactor --ci --format json . > credential-report.json
   artifacts:
     reports:
       codequality: credential-report.json
@@ -144,7 +144,7 @@ credential-scan:
 ### Generic
 
 ```bash
-python -m credredactor --ci .
+python -m credactor --ci .
 ```
 
 ## Tests
@@ -157,11 +157,11 @@ python -m pytest tests/ -v
 ## Project Structure
 
 ```
-credredactor/
+credactor/
     __init__.py          # version
     __main__.py          # python -m entry point
     cli.py               # arg parsing, main flow
-    config.py            # .credredactor.toml loading
+    config.py            # .credactor.toml loading
     gitignore.py         # .gitignore matching
     patterns.py          # regexes, constants
     redactor.py          # file modification, backups

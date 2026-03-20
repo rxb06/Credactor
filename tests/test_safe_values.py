@@ -2,7 +2,7 @@
 
 import pytest
 
-from credredactor.scanner import _is_safe_value
+from credactor.scanner import _is_safe_value
 
 
 class TestSafeValues:
@@ -11,7 +11,7 @@ class TestSafeValues:
         'placeholder',
         'changeme',
         'xxxxx',
-        'REDACTED_BY_CREDREDACTOR',
+        'REDACTED_BY_CREDACTOR',
         'none',
         'null',
         'true',
@@ -84,16 +84,16 @@ class TestSafeValues:
         assert not _is_safe_value(conn)
 
     def test_real_credentials_not_safe(self):
-        # credredactor:ignore
+        # credactor:ignore
         pwd = 'xK9#mL2' + '$vQ7@nR5'
         assert not _is_safe_value(pwd)
-        # credredactor:ignore
+        # credactor:ignore
         key = 'sk_live_abcdefghij' + 'klmnopqrstuvwx'
         assert not _is_safe_value(key)
 
     def test_sentinel_is_safe(self):
         # The redaction sentinel must be safe so we don't re-flag already-redacted files
-        assert _is_safe_value('REDACTED_BY_CREDREDACTOR')
+        assert _is_safe_value('REDACTED_BY_CREDACTOR')
 
     def test_extra_safe_values(self):
         assert _is_safe_value('custom_safe_val', extra_safe={'custom_safe_val'})

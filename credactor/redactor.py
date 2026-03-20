@@ -28,7 +28,7 @@ def _make_replacement(
     """Produce the replacement string for a credential finding.
 
     Modes (config.replace_mode):
-      - 'sentinel':  REDACTED_BY_CREDREDACTOR  (or config.custom_replacement)
+      - 'sentinel':  REDACTED_BY_CREDACTOR  (or config.custom_replacement)
       - 'env':       os.environ["VAR_NAME"]  (Python-style env var reference)
       - 'custom':    config.custom_replacement
     """

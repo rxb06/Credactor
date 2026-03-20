@@ -3,8 +3,8 @@
 import io
 import json
 
-from credredactor.report import json_report, print_report, sarif_report
-from credredactor.utils import mask_secret
+from credactor.report import json_report, print_report, sarif_report
+from credactor.utils import mask_secret
 
 # Construct test credential via concatenation to prevent self-redaction
 _AWS_KEY = 'AKIA' + 'IOSFODNN7EXAMPLE'

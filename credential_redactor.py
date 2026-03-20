@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-credential_redactor.py — CLI entry point.
+credential_redactor.py — backward-compatible CLI entry point.
 
 Usage:
     python3 credential_redactor.py --help
     python3 credential_redactor.py [directory]           # interactive mode
     python3 credential_redactor.py [directory] --ci      # CI mode: report only, exit 1
     python3 credential_redactor.py [directory] --fix-all # redact all without prompting
-    python3 -m credredactor --help                       # equivalent
+    python3 -m credactor --help                          # equivalent
 """
 
-from credredactor.cli import main
+from credactor.cli import main
 
 if __name__ == '__main__':
     main()

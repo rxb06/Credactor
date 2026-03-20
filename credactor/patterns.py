@@ -34,7 +34,7 @@ SAFE_VALUES = {
     'your_secret', 'your_token', 'your_password', 'enter_here',
     'your_client_id', 'your_client_secret', 'your_tenant_id',
     'xxxx', 'xxxxxx', 'xxxxxxx', 'xxxxxxxx',
-    'redacted_by_credredactor',
+    'redacted_by_credactor',
 }
 
 # ---------------------------------------------------------------------------
@@ -201,4 +201,4 @@ XML_ATTR_RE = _XML_KEY_FIRST
 # ---------------------------------------------------------------------------
 # Inline suppression comment pattern (#3)
 # ---------------------------------------------------------------------------
-SUPPRESS_RE = re.compile(r'credredactor:\s*ignore', re.IGNORECASE)
+SUPPRESS_RE = re.compile(r'credactor:\s*ignore', re.IGNORECASE)

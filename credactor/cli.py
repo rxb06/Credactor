@@ -22,7 +22,7 @@ from .walker import scan_git_history, scan_staged_files, select_json_files, walk
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog='credredactor',
+        prog='credactor',
         description='Scan source files for hardcoded credentials and optionally redact them.',
         epilog='Exit codes: 0 = clean, 1 = unresolved findings, 2 = error',
     )
@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='Replacement strategy: sentinel (default), env (language-aware env var ref), custom',
     )
     replace.add_argument(
-        '--replacement', type=str, default='REDACTED_BY_CREDREDACTOR',
+        '--replacement', type=str, default='REDACTED_BY_CREDACTOR',
         help='Custom replacement string (used with --replace-with=sentinel or custom)',
     )
     replace.add_argument(
@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     config_group = parser.add_argument_group('configuration')
     config_group.add_argument(
         '--config', type=str, default=None,
-        help='Path to .credredactor.toml config file',
+        help='Path to .credactor.toml config file',
     )
     config_group.add_argument(
         '--scan-json', action='store_true',

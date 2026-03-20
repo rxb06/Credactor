@@ -1,8 +1,8 @@
-"""Unit tests for regex patterns in credredactor.patterns."""
+"""Unit tests for regex patterns in credactor.patterns."""
 
 import pytest
 
-from credredactor.patterns import (
+from credactor.patterns import (
     _AWS_RE,
     _CONN_STRING_RE,
     _GCP_RE,
@@ -191,10 +191,10 @@ class TestDynamicLookup:
 # ---------------------------------------------------------------------------
 class TestSuppressPattern:
     def test_basic(self):
-        assert SUPPRESS_RE.search('api_key = "secret"  # credredactor:ignore')
+        assert SUPPRESS_RE.search('api_key = "secret"  # credactor:ignore')
 
     def test_case_insensitive(self):
-        assert SUPPRESS_RE.search('key = "val"  # CredRedactor: Ignore')
+        assert SUPPRESS_RE.search('key = "val"  # Credactor: Ignore')
 
     def test_no_match(self):
         assert not SUPPRESS_RE.search('api_key = "secret"  # this is fine')

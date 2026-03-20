@@ -2,12 +2,12 @@
 
 All test credential values are synthetic/example-only and appear in public
 documentation.  They MUST NOT be redacted — add this directory to
-.credredactorignore to prevent self-redaction.
+.credactorignore to prevent self-redaction.
 """
 
 import pytest
 
-from credredactor.scanner import scan_file, scan_line, should_scan_file
+from credactor.scanner import scan_file, scan_line, should_scan_file
 
 
 # ---------------------------------------------------------------------------
@@ -15,13 +15,13 @@ from credredactor.scanner import scan_file, scan_line, should_scan_file
 # ---------------------------------------------------------------------------
 class TestTruePositives:
     def test_aws_key_in_assignment(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         findings = scan_line(1, 'aws_key = "AKIA' + 'IOSFODNN7EXAMPLE"', 'test.py', config=config)
         assert len(findings) >= 1
         assert any('AWS' in f['type'] or 'variable' in f['type'] for f in findings)
 
     def test_jwt_token(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         jwt = ('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
                '.eyJzdWIiOiIxMjM0NTY3ODkwIn0'
                '.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U')
@@ -29,55 +29,55 @@ class TestTruePositives:
         assert len(findings) >= 1
 
     def test_high_entropy_password(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         pwd = 'xK9#mL2' + '$vQ7@nR5pZ3'
         findings = scan_line(1, f'password = "{pwd}"', 'test.py', config=config)
         assert len(findings) >= 1
 
     def test_github_pat(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         tok = 'ghp_ABCDEFGHIJ' + 'KLMNOPqrstuvwxyz123456'
         findings = scan_line(1, f'token = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
 
     def test_stripe_live_key(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         key = 'sk_live_abcdefghij' + 'klmnopqrstuvwx'
         findings = scan_line(1, f'key = "{key}"', 'test.py', config=config)
         assert len(findings) >= 1
 
     def test_connection_string(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         conn = 'postgresql://admin:s3cretP' + '@ss@db.host.com:5432/mydb'
         findings = scan_line(1, f'db_url = "{conn}"', 'test.py', config=config)
         assert len(findings) >= 1
 
     def test_slack_token(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         tok = 'xoxb-12345678' + '90-abcdefghij'
         findings = scan_line(1, f'bot = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
 
     def test_severity_is_present(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         key = 'AKIA' + 'IOSFODNN7EXAMPLE'
         findings = scan_line(1, f'key = "{key}"', 'test.py', config=config)
         assert all('severity' in f for f in findings)
 
     def test_gcp_api_key(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         key = 'AIzaSyA12345678' + '90abcdefghijklmnopqrstuv'
         findings = scan_line(1, f'gcp_key = "{key}"', 'test.py', config=config)
         assert len(findings) >= 1
 
     def test_gitlab_pat(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         tok = 'glpat-a1B2c3D4e5' + 'F6g7H8i9J0k1L2m3N4o5'
         findings = scan_line(1, f'token = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
 
     def test_npm_token(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         tok = 'npm_abcdefghijklmnop' + 'qrstuvwxyz0123456789'
         findings = scan_line(1, f'token = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
@@ -110,10 +110,10 @@ class TestTrueNegatives:
         assert len(findings) == 0
 
     def test_inline_suppression(self, config):
-        # credredactor:ignore
+        # credactor:ignore
         pwd = 'xK9#mL2' + '$vQ7@nR5'
         findings = scan_line(
-            1, f'api_key = "{pwd}"  # credredactor:ignore',
+            1, f'api_key = "{pwd}"  # credactor:ignore',
             'test.py', config=config,
         )
         assert len(findings) == 0
@@ -138,7 +138,7 @@ class TestTrueNegatives:
         assert len(findings) == 0
 
     def test_sentinel_not_reflagged(self, config):
-        findings = scan_line(1, 'api_key = "REDACTED_BY_CREDREDACTOR"', 'test.py', config=config)
+        findings = scan_line(1, 'api_key = "REDACTED_BY_CREDACTOR"', 'test.py', config=config)
         assert len(findings) == 0
 
     def test_sops_encrypted(self, config):
@@ -165,7 +165,7 @@ class TestScanFile:
 
     def test_pem_block_suppressed_skips_contents(self, make_file, config):
         content = (
-            '-----BEGIN RSA PRIVATE KEY-----  # credredactor:ignore\n'
+            '-----BEGIN RSA PRIVATE KEY-----  # credactor:ignore\n'
             'MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgHcTz6sE2I2yPB\n'
             '-----END RSA PRIVATE KEY-----\n'
         )
@@ -185,7 +185,7 @@ class TestScanFile:
 
     def test_bom_file(self, make_file, config):
         """UTF-8 BOM should not break detection on line 1."""
-        # credredactor:ignore
+        # credactor:ignore
         key = 'AKIA' + 'IOSFODNN7EXAMPLE'
         content = f'\ufeffapi_key = "{key}"\n'
         path = make_file('bom.py', content)
@@ -196,7 +196,7 @@ class TestScanFile:
         self, make_file, config,
     ):
         """CVE-02: unclosed PEM block must not suppress subsequent lines."""
-        # credredactor:ignore
+        # credactor:ignore
         key = 'AKIA' + 'IOSFODNN7EXAMPLE'
         # PEM header with no END marker, followed by >100 filler lines,
         # then a real credential that MUST be detected.

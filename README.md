@@ -1,6 +1,6 @@
-# CredRedactor
+# Credactor
 
-Credential scanner and redactor for source code. Finds hardcoded API keys, tokens, passwords, connection strings, and private keys across 20+ file types, then helps you remove them.
+*Credential redactor* — finds and removes hardcoded secrets from source code. API keys, tokens, passwords, connection strings, private keys. 20+ file types. Zero config to start.
 
 ## Detection
 
@@ -25,24 +25,38 @@ Credential scanner and redactor for source code. Finds hardcoded API keys, token
 - Git history scanning via `--scan-history`
 - Text, JSON, and SARIF output (SARIF integrates with GitHub Code Scanning)
 - `.bak` backups before any file modification
-- Inline `# credredactor:ignore` suppression and `.credredactorignore` allowlists
-- Per-repo config via `.credredactor.toml`
+- Inline `# credactor:ignore` suppression and `.credactorignore` allowlists
+- Per-repo config via `.credactor.toml`
 - Parallel scanning for large repos
+
+## Install
+
+```bash
+pip install -e .
+```
+
+This gives you the `credactor` and `credactor` commands.
 
 ## Quick Start
 
 ```bash
 # Scan current directory
-python -m credredactor
+credactor .
 
 # Dry run (no modifications)
-python -m credredactor --dry-run
+credactor --dry-run /path/to/project
 
 # Redact everything without prompting
-python -m credredactor --fix-all
+credactor --fix-all .
 
 # CI mode — exit 1 on findings
-python -m credredactor --ci
+credactor --ci .
+```
+
+Or run as a module without installing:
+
+```bash
+python -m credactor .
 ```
 
 ## Scanned File Types

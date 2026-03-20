@@ -38,28 +38,28 @@ We will keep you informed of progress and coordinate disclosure timing with you.
 
 ## Security Model
 
-CredRedactor is a **developer-side static analysis tool** that scans source files for hardcoded credentials. Understanding its trust boundaries is important:
+Credactor is a **developer-side static analysis tool** that scans source files for hardcoded credentials. Understanding its trust boundaries is important:
 
-### What CredRedactor protects against
+### What Credactor protects against
 
 - Accidentally committing hardcoded API keys, tokens, passwords, and private keys.
 - Credentials in assignment statements, XML attributes, connection strings, PEM blocks, and multi-line strings.
-- Re-flagging already-redacted values (the sentinel `REDACTED_BY_CREDREDACTOR` is in the safe-values list).
+- Re-flagging already-redacted values (the sentinel `REDACTED_BY_CREDACTOR` is in the safe-values list).
 
-### What CredRedactor does NOT protect against
+### What Credactor does NOT protect against
 
 - **Obfuscated credentials:** Base64-encoded secrets, encrypted blobs (other than SOPS), or credentials split across multiple files.
 - **Runtime secrets:** Credentials injected via environment variables, secret managers, or APIs at runtime are intentionally ignored (these are the *correct* pattern).
 - **Binary files:** Only text-based source files are scanned; binary formats (`.exe`, `.zip`, `.png`, etc.) are skipped.
-- **Determined adversaries:** An attacker with write access to your codebase could craft evasion patterns. CredRedactor is a safety net, not a security boundary.
+- **Determined adversaries:** An attacker with write access to your codebase could craft evasion patterns. Credactor is a safety net, not a security boundary.
 
 ### Trust boundaries
 
 | Component                   | Trust Level | Notes                                                                   |
 |-----------------------------|-------------|-------------------------------------------------------------------------|
 | Source files being scanned  | Untrusted   | May contain adversarial content; regex patterns are hardened against ReDoS |
-| `.credredactor.toml` config | Semi-trusted | Can adjust thresholds and safe-values; traversal limited to 5 parent dirs |
-| `.credredactorignore`       | Semi-trusted | Can suppress findings for specific files, lines, or values              |
+| `.credactor.toml` config | Semi-trusted | Can adjust thresholds and safe-values; traversal limited to 5 parent dirs |
+| `.credactorignore`       | Semi-trusted | Can suppress findings for specific files, lines, or values              |
 | CLI arguments               | Trusted     | Provided by the developer running the tool                              |
 | Git history (`--scan-history`) | Untrusted | Parses `git log -p` output; input is sanitized                         |
 
@@ -90,10 +90,10 @@ The following are **in scope** for security reports:
 - Credential leakage in tool output (unmasked secrets in reports, logs, or error messages).
 - File system safety issues (path traversal, symlink attacks, TOCTOU races).
 - Denial of service (ReDoS, OOM, infinite loops).
-- Config injection (malicious `.credredactor.toml` or `.credredactorignore` causing unsafe behavior).
+- Config injection (malicious `.credactor.toml` or `.credactorignore` causing unsafe behavior).
 
 The following are **out of scope**:
 
-- Known limitations listed in the "What CredRedactor does NOT protect against" section above.
+- Known limitations listed in the "What Credactor does NOT protect against" section above.
 - Vulnerabilities in dependencies (report these to the upstream project).
 - Social engineering or phishing attacks.

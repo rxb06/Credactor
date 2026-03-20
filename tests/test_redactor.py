@@ -2,8 +2,8 @@
 
 import os
 
-from credredactor.config import Config
-from credredactor.redactor import _derive_env_var_name, batch_replace_in_file
+from credactor.config import Config
+from credactor.redactor import _derive_env_var_name, batch_replace_in_file
 
 # Construct test credentials via concatenation so the tool doesn't self-redact
 _AWS_KEY = 'AKIA' + 'IOSFODNN7EXAMPLE'
@@ -62,18 +62,18 @@ class TestBatchReplace:
             text = f.read()
         assert _AWS_KEY not in text
         assert _PASSWORD not in text
-        assert 'REDACTED_BY_CREDREDACTOR' in text
+        assert 'REDACTED_BY_CREDACTOR' in text
 
     def test_sentinel_replacement(self, make_file):
         config = Config(no_backup=True, replace_mode='sentinel',
-                        custom_replacement='REDACTED_BY_CREDREDACTOR')
+                        custom_replacement='REDACTED_BY_CREDACTOR')
         path = make_file('sent.py', 'api_key = "mysecretkey123456"\n')
         finding = {'file': path, 'line': 1, 'type': 'variable:api_key',
                    'severity': 'high', 'full_value': 'mysecretkey123456',
                    'value_preview': '', 'raw': ''}
         batch_replace_in_file(path, [finding], config)
         with open(path) as f:
-            assert 'REDACTED_BY_CREDREDACTOR' in f.read()
+            assert 'REDACTED_BY_CREDACTOR' in f.read()
 
     def test_preserves_file_permissions(self, make_file):
         config = Config(no_backup=True)

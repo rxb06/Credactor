@@ -1,5 +1,5 @@
 """
-Suppression mechanisms: inline comments and .credredactorignore file.
+Suppression mechanisms: inline comments and .credactorignore file.
 
 Addresses: #3 (inline suppression), #4 (allowlist file)
 """
@@ -12,12 +12,12 @@ from .patterns import SUPPRESS_RE
 
 
 def has_inline_suppression(line: str) -> bool:
-    """Return True if the line contains a ``credredactor:ignore`` comment."""
+    """Return True if the line contains a ``credactor:ignore`` comment."""
     return bool(SUPPRESS_RE.search(line))
 
 
 class AllowList:
-    """Loads and matches entries from a ``.credredactorignore`` file.
+    """Loads and matches entries from a ``.credactorignore`` file.
 
     Supported entry formats::
 
@@ -36,7 +36,7 @@ class AllowList:
         self._load()
 
     def _load(self) -> None:
-        ignore_path = self._root / '.credredactorignore'
+        ignore_path = self._root / '.credactorignore'
         if not ignore_path.is_file():
             return
         try:
