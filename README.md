@@ -1,41 +1,20 @@
+[![PyPI](https://img.shields.io/pypi/v/credactor)](https://pypi.org/project/credactor/)
+[![CI](https://github.com/rxb06/Credactor/actions/workflows/ci.yml/badge.svg)](https://github.com/rxb06/Credactor/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
 # Credactor
 
-*Credential redactor* — finds and removes hardcoded secrets from source code. API keys, tokens, passwords, connection strings, private keys. 20+ file types. Zero config to start.
+Credactor scans source code for hardcoded secrets — API keys, tokens, passwords, private keys, connection strings — and redacts or replaces them with environment variable references before they reach version control. It runs as a CLI tool, a pre-commit hook, or in CI pipelines. SARIF output integrates directly with GitHub Code Scanning.
 
-## Detection
+## Why Credactor?
 
-| Category | Examples | Severity |
-|---|---|---|
-| Cloud provider keys | AWS (`AKIA...`), GCP (`AIza...`), Stripe (`sk_live_...`), Slack (`xoxb-...`) | Critical |
-| Platform tokens | GitHub (`ghp_`, `github_pat_`), GitLab (`glpat-`), npm (`npm_`), PyPI (`pypi-`) | Critical |
-| Private keys | PEM blocks (`-----BEGIN RSA PRIVATE KEY-----`) | Critical |
-| JWT tokens | `eyJ...` three-segment tokens | High |
-| Connection strings | `postgresql://user:pass@host`, `mongodb+srv://...`, `redis://...` | High |
-| Variable assignments | `password = "..."`, `api_key = "..."`, `db_password = "..."` | High/Medium |
-| XML attributes | `<add key="Password" value="..." />` | High |
-| High-entropy strings | Hex (32-64 chars), Base64 (60+ chars) | Medium/Low |
-
-## Features
-
-- Entropy-based detection with per-pattern thresholds to cut false positives
-- Severity levels (critical / high / medium / low) for triage
-- Interactive or batch redaction — review one-by-one, or `--fix-all`
-- Language-aware replacement — `--replace-with env` generates `os.environ["KEY"]` in Python, `process.env.KEY` in JS, `System.getenv("KEY")` in Java, etc.
-- Pre-commit hook support via `--staged`
-- Git history scanning via `--scan-history`
-- Text, JSON, and SARIF output (SARIF integrates with GitHub Code Scanning)
-- `.bak` backups before any file modification
-- Inline `# credactor:ignore` suppression and `.credactorignore` allowlists
-- Per-repo config via `.credactor.toml`
-- Parallel scanning for large repos
+Most secret scanners stop at detection. Credactor goes further: it redacts in place, generates language-aware env var replacements (`os.environ` in Python, `process.env` in JS, `System.getenv` in Java), and assigns severity levels so you can triage critical findings first instead of wading through noise.
 
 ## Install
 
 ```bash
-pip install -e .
+pip install credactor
 ```
-
-This gives you the `credactor` and `credactor` commands.
 
 ## Quick Start
 
@@ -53,11 +32,45 @@ credactor --fix-all .
 credactor --ci .
 ```
 
-Or run as a module without installing:
+As a pre-commit hook:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/rxb06/Credactor
+    rev: v2.0.0
+    hooks:
+      - id: credactor
+```
+
+Or run as a module:
 
 ```bash
 python -m credactor .
 ```
+
+## Detection
+
+| Category | Examples | Severity |
+|---|---|---|
+| Cloud provider keys | AWS (`AKIA...`), GCP (`AIza...`), Stripe (`sk_live_...`), Slack (`xoxb-...`) | Critical |
+| Platform tokens | GitHub (`ghp_`, `github_pat_`), GitLab (`glpat-`), npm (`npm_`), PyPI (`pypi-`) | Critical |
+| Private keys | PEM blocks (`-----BEGIN RSA PRIVATE KEY-----`) | Critical |
+| JWT tokens | `eyJ...` three-segment tokens | High |
+| Connection strings | `postgresql://user:pass@host`, `mongodb+srv://...`, `redis://...` | High |
+| Variable assignments | `password = "..."`, `api_key = "..."`, `db_password = "..."` | High/Medium |
+| XML attributes | `<add key="Password" value="..." />` | High |
+| High-entropy strings | Hex (32-64 chars), Base64 (60+ chars) | Medium/Low |
+
+## Features
+
+- Entropy-based detection with per-pattern thresholds to cut false positives
+- Interactive or batch redaction — review one-by-one, or `--fix-all`
+- Git history scanning via `--scan-history`
+- `.bak` backups before any file modification
+- Inline `# credactor:ignore` suppression and `.credactorignore` allowlists
+- Per-repo config via `.credactor.toml`
+- Parallel scanning for large repos
 
 ## Scanned File Types
 
@@ -89,9 +102,7 @@ Values: placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `
 - [Integration](docs/integration.md) — pre-commit hooks, CI setup
 - [Disclaimer](docs/DISCLAIMER.md) — limitations, safe usage, warranty
 
-## Transparancy over AI Usage
-AI was used for code review, bug fixes, security auditing, and documentation structuring for the project. 
-All output was reviewed and validated manually.
+> AI was used for code review, bug fixes, security auditing, and documentation structuring. All output was reviewed and validated manually.
 
 ## License
 
