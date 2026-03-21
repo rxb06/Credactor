@@ -1,15 +1,27 @@
 # Integration Guide
 
-Credactor works best as a pre-commit hook that catches secrets before they reach git history. A CI pipeline can serve as a secondary safety net.
+The recommended workflow is to run Credactor manually before committing:
 
-## Pre-commit Framework
+```bash
+credactor --dry-run .
+```
+
+This gives you full control over findings before they enter git history. Review the output, suppress false positives with `# credactor:ignore`, then commit with confidence.
+
+Pre-commit hooks and CI pipelines automate this further, but a manual scan is the most reliable first step.
+
+## Pre-commit Hook (Beta)
+
+> Hook-based scanning is in beta. We recommend running `credactor --dry-run .` manually before relying on hooks exclusively.
+
+### Pre-commit Framework
 
 If you use [pre-commit](https://pre-commit.com), add this to your `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.0.0  # pin to a release tag
+    rev: v2.1.1  # pin to a release tag
     hooks:
       - id: credactor
 ```
@@ -22,7 +34,7 @@ pre-commit install
 
 Every `git commit` will now scan staged files automatically. The commit is blocked if credentials are found.
 
-## Standalone Git Hook
+### Standalone Git Hook
 
 No framework needed. Copy the provided script into your repo:
 

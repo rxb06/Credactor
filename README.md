@@ -23,12 +23,14 @@ pip install credactor
 
 ## Quick Start
 
-```bash
-# Scan current directory
-credactor .
+> **Recommended:** Always run `--dry-run` first and review findings before redacting. False positives are possible — use `# credactor:ignore` or `.credactorignore` to suppress them.
 
-# Dry run (no modifications)
-credactor --dry-run /path/to/project
+```bash
+# Scan current directory (dry run first)
+credactor --dry-run .
+
+# Scan and interactively redact
+credactor .
 
 # Redact everything without prompting
 credactor --fix-all .
@@ -37,13 +39,15 @@ credactor --fix-all .
 credactor --ci .
 ```
 
-As a pre-commit hook:
+### Pre-commit Hook (Beta)
+
+> Hook-based scanning is in beta. Run `credactor --dry-run .` manually before relying on hooks alone.
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.0.0
+    rev: v2.1.1
     hooks:
       - id: credactor
 ```
@@ -107,7 +111,7 @@ Values: placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `
 - [Integration](docs/integration.md) — pre-commit hooks, CI setup
 - [Disclaimer](docs/DISCLAIMER.md) — limitations, safe usage, warranty
 
-> AI was used for code review, bug fixes, security auditing, and documentation structuring. All output was reviewed and validated manually.
+> AI Use Transparency: AI was used for code review, bug fixes, security auditing, and documentation structuring. All output was reviewed and validated manually.
 
 ## License
 

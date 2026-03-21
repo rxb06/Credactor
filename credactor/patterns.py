@@ -21,7 +21,8 @@ SCAN_EXTENSIONS = {
 
 # Directories / files to skip entirely
 SKIP_DIRS = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.tox',
-             '.mypy_cache', '.pytest_cache', 'dist', 'build', '.eggs'}
+             '.mypy_cache', '.pytest_cache', 'dist', 'build', '.eggs',
+             '.idea', '.vscode', '.vs'}
 SKIP_FILES = {'package-lock.json', 'yarn.lock', 'poetry.lock', 'pnpm-lock.yaml'}
 
 # ---------------------------------------------------------------------------
@@ -35,6 +36,14 @@ SAFE_VALUES = {
     'your_client_id', 'your_client_secret', 'your_tenant_id',
     'xxxx', 'xxxxxx', 'xxxxxxx', 'xxxxxxxx',
     'redacted_by_credactor',
+    # Test/mock/fake prefixed values
+    'test_password', 'mock_password', 'fake_password',
+    'test_api_key', 'mock_api_key', 'fake_api_key',
+    'test_secret', 'mock_secret', 'fake_secret',
+    'test_token', 'mock_token', 'fake_token',
+    # Common .env.example placeholders
+    'change_this', 'replace_this', 'update_me', 'set_me',
+    'fill_in', 'add_your_key', 'put_your_key_here',
 }
 
 # ---------------------------------------------------------------------------
@@ -59,6 +68,22 @@ DYNAMIC_LOOKUP_RE = re.compile(
     r'|ENC\[AES256_GCM,'               # SOPS-encrypted value
     r'|hvac\.Client'                    # Hashicorp Vault Python client
     r'|Vault\.read\s*\('               # Vault read call
+    # Runtime env lookups across languages
+    r'|process\.env\.'                  # JS/Node: process.env.VAR
+    r'|Rails\.application\.credentials' # Ruby on Rails encrypted credentials
+    # Terraform / HCL references
+    r'|data\.\w+'                       # Terraform: any data.* source
+    r'|var\.\w+'                        # Terraform: var.name references
+    r'|local\.\w+'                      # Terraform: local.* values
+    r'|module\.\w+'                     # Terraform: module.* outputs
+    r'|random_password\.\w+'            # Terraform: random_password resource
+    # Platform-specific runtime lookups
+    r'|BuildConfig\.\w+'               # Android/Kotlin: compile-time constants
+    r'|op://[\w/]+'                     # 1Password CLI: op://vault/item/field
+    r'|doppler\.get\s*\('              # Doppler SDK
+    r'|infisical\.get\s*\('            # Infisical SDK
+    r'|SecretManager.*\.access_secret'  # GCP Secret Manager
+    r'|config\.require_secret\s*\('    # Pulumi secret config
     r')',
     re.IGNORECASE,
 )

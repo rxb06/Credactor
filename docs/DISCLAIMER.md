@@ -30,9 +30,13 @@ Credactor is a static analysis tool that uses regex patterns and entropy heurist
 
 ### False positives
 
-- High-entropy strings that aren't credentials (hashes, UUIDs, encoded data) may be flagged.
-- Variable names matching credential patterns with non-secret values may trigger.
-- Use `.credactorignore`, inline `# credactor:ignore` comments, or `.credactor.toml` to suppress known false positives.
+Credactor is actively improving false positive rates, but they are not yet zero. Common sources:
+
+- High-entropy strings that aren't credentials (UUIDs, encoded data, internal IDs)
+- Variable names matching credential patterns with non-secret values
+- IDE-generated files and build artifacts with hash-like content
+
+Always run `--dry-run` first and review findings before redacting. Use `.credactorignore`, inline `# credactor:ignore` comments, or `.credactor.toml` to suppress known false positives.
 
 ### False negatives
 

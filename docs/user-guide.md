@@ -1,10 +1,12 @@
 # User Guide
 
+> **Important:** Credactor uses regex and entropy heuristics. False positives are possible, especially with low-severity findings. Always review findings before redacting. Use `--dry-run` for a non-destructive scan, and suppress known false positives with `# credactor:ignore` or `.credactorignore`.
+
 ## Usage
 
 ```bash
-# Scan current directory
-python -m credactor
+# Dry run first — review before modifying anything
+python -m credactor --dry-run .
 
 # Scan a specific path
 python -m credactor /path/to/project
@@ -212,12 +214,22 @@ SARIF 2.1.0 output for GitHub Code Scanning, VS Code SARIF Viewer, or any compat
 
 These are treated as safe automatically:
 
-- Placeholder values: `your_api_key`, `changeme`, `placeholder`, `TODO`
-- Env var references: `$VAR`, `${VAR}`, `os.getenv("KEY")`
-- Dynamic lookups: `config.get()`, `Variable.get()`, `keyring.get_password()`, Vault, SOPS
+- Placeholder values: `your_api_key`, `changeme`, `placeholder`, `TODO`, `change_this`
+- Test/mock values: `test_password`, `mock_api_key`, `fake_secret`
+- Env var references: `$VAR`, `${VAR}`, `os.getenv("KEY")`, `process.env.KEY`
+- Template variables: `{{ vault_password }}`, `${SECRET}`, `{%...%}`
+- Dynamic lookups: `config.get()`, `Variable.get()`, `keyring.get_password()`, Vault, SOPS, Doppler, 1Password (`op://`)
+- Property access: `self.config.password`, `context.settings.apiKey`, `this.props.secret`
+- Function calls: `get_secret()`, `generate_password(length, symbols)`
+- Terraform references: `var.password`, `local.secret`, `module.db.password`, `data.*`
+- Hash/digest variables: `password_hash`, `api_key_checksum`, `token_digest`
+- Hash values: bcrypt (`$2b$...`), argon2 (`$argon2id$...`)
 - File paths: `/home/user/.ssh/key`, `./config/secret.yaml`
 - URLs without credentials: `https://api.example.com/v1/endpoint`
 - Function definitions: `def get_password(self, password="default"):`
+- IDE directories: `.idea/`, `.vscode/`, `.vs/`
 - Low-entropy values (below 3.5 bits/char by default)
 - Short values (under 8 characters)
 - Already-redacted values: `REDACTED_BY_CREDACTOR`
+
+If you encounter a false positive not listed above, suppress it with `# credactor:ignore` on the line or add the file pattern to `.credactorignore`. Consider [opening an issue](https://github.com/rxb06/Credactor/issues) so it can be fixed for everyone.

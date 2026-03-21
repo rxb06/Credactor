@@ -37,9 +37,47 @@ _MAX_PEM_BLOCK_LINES = 100
 # Max file size to scan (bytes) — skip silently above this (HIGH-05 fix)
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
-# Function call heuristic: identifier(...) pattern
+# Function call heuristic: identifier(...) complete call
 _FUNC_CALL_RE = re.compile(
     r'^[a-zA-Z_][\w.]*\(.*\)$', re.DOTALL,
+)
+
+# Truncated function call: unquoted capture stopped mid-call, e.g. "func(arg,"
+_FUNC_CALL_TRUNC_RE = re.compile(
+    r'^[a-zA-Z_][\w.]*\([^)]*,?$',
+)
+
+# Dotted property access: self.config.password, context.config.apiKey
+# Two or more dot-separated identifiers = runtime reference, not a literal.
+# Each segment must start with a letter/underscore and be <=40 chars to
+# avoid matching JWT tokens (Base64-encoded dot-separated segments).
+_DOTTED_ACCESS_RE = re.compile(
+    r'^[a-zA-Z_]\w{0,39}(?:\.[a-zA-Z_]\w{0,39}){1,}(?:\[.*\])?$',
+)
+
+# Placeholder words commonly found in example/template config values
+_PLACEHOLDER_WORDS = {
+    'change', 'replace', 'your', 'here', 'insert',
+    'update', 'fill', 'set', 'put', 'add', 'todo',
+    'fixme', 'example', 'sample', 'default', 'enter',
+}
+
+# Hash/encrypted value prefixes — these store derived values, not raw secrets
+_HASH_PREFIX_RE = re.compile(
+    r'^\$(?:2[aby]\$|argon2[id]{0,2}\$|scrypt\$|pbkdf2)',
+)
+
+# Variable name suffixes indicating stored hashes, not raw credentials
+_HASH_VAR_SUFFIXES = (
+    '_hash', '_hashed', '_digest', '_checksum',
+    '_fingerprint', '_hmac', '_encrypted', '_cipher',
+)
+
+# Line-level context check: if the line assigns to a hash/digest variable,
+# hex values on that line are likely hash outputs, not raw credentials
+_HASH_CONTEXT_RE = re.compile(
+    r'(?:_hash|_hashed|_digest|_checksum|_fingerprint|_hmac|sha\d+|md5)\s*[:=]',
+    re.IGNORECASE,
 )
 
 
@@ -56,14 +94,27 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if cleaned.startswith('$'):
         return True
 
-    # Template variable reference (${VAR} or {%...%} Jinja) — must have
-    # the full template syntax, not bare curly braces (CVE-03 fix)
+    # Template variable reference (${VAR}, {%...%} Jinja, {{...}} Helm/Ansible)
+    # CVE-03 fix: must have full template syntax, not bare curly braces
     if cleaned.startswith('${') or cleaned.startswith('{%'):
+        return True
+    if cleaned.startswith('{{'):
+        return True
+
+    # 1Password CLI secret reference: op://vault/item/field
+    if cleaned.startswith('op://'):
         return True
 
     # Function call: full value looks like identifier(...) (CVE-01 fix)
     # e.g. get_secret(), Variable.get("key"), os.getenv("X")
-    if _FUNC_CALL_RE.match(raw):
+    # Also catch truncated calls like "generate_password(length," where
+    # the unquoted capture stopped at a space mid-argument list.
+    if _FUNC_CALL_RE.match(raw) or _FUNC_CALL_TRUNC_RE.match(raw):
+        return True
+
+    # Dotted property access: self.config.password, context.config.apiKey
+    # Runtime references, not hardcoded values
+    if _DOTTED_ACCESS_RE.match(raw):
         return True
 
     # File paths: ./, ~/, Windows drive letter
@@ -82,6 +133,20 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     # 3 slashes to reduce false negatives (HIGH-02 fix)
     slash_count = raw.count('/')
     if slash_count >= 3 and (slash_count / max(len(raw), 1)) > 0.20:
+        return True
+
+    # Placeholder heuristic: values containing placeholder words
+    # e.g. "change_this_password", "replace_your_key_here"
+    tokens = set(cleaned.replace('_', ' ').replace('-', ' ').split())
+    matches = tokens & _PLACEHOLDER_WORDS
+    if len(matches) >= 2:
+        return True
+    # Strong single-word indicators (never appear in real credentials)
+    if matches & {'changeme', 'placeholder', 'replace', 'fixme', 'todo', 'change', 'insert'}:
+        return True
+
+    # Hashed/encrypted values: bcrypt, argon2, scrypt prefixes
+    if _HASH_PREFIX_RE.match(cleaned):
         return True
 
     return False
@@ -137,6 +202,10 @@ def scan_line(
                     start = match.start()
                     if start == 0 or line[start - 1] not in ('"', "'"):
                         continue
+
+                # hex/high-entropy: skip if line contains hash/digest variable
+                if label in ('hex credential', 'high-entropy string') and _HASH_CONTEXT_RE.search(line):
+                    continue
 
                 if _is_safe_value(val, extra_safe):
                     continue
@@ -205,6 +274,10 @@ def scan_line(
         val = match.group('val_q') or match.group('val_u') or ''
 
         if not CRED_VAR_PATTERNS.search(var):
+            continue
+        # Skip hash/digest/checksum storage — these are derived values
+        low_var = var.lower()
+        if any(low_var.endswith(s) for s in _HASH_VAR_SUFFIXES):
             continue
         if _is_safe_value(val, extra_safe):
             continue
