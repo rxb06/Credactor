@@ -204,7 +204,8 @@ def scan_line(
                         continue
 
                 # hex/high-entropy: skip if line contains hash/digest variable
-                if label in ('hex credential', 'high-entropy string') and _HASH_CONTEXT_RE.search(line):
+                is_hex_like = label in ('hex credential', 'high-entropy string')
+                if is_hex_like and _HASH_CONTEXT_RE.search(line):
                     continue
 
                 if _is_safe_value(val, extra_safe):
