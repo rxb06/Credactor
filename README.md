@@ -7,7 +7,7 @@
 Credactor scans source code for hardcoded secrets — API keys, tokens, passwords, private keys, connection strings — and redacts or replaces them with environment variable references before they reach version control. It runs as a CLI tool, a pre-commit hook, or in CI pipelines. SARIF output integrates directly with GitHub Code Scanning.
 
 
-<img width="1536" height="1024" alt="credactor" src="https://github.com/user-attachments/assets/f1f94a9c-feea-4b8b-9ea4-81f25f07c4df" />
+<img width="1280" height="640" alt="credactor" src="https://github.com/user-attachments/assets/f1f94a9c-feea-4b8b-9ea4-81f25f07c4df" />
 
 ---
 
