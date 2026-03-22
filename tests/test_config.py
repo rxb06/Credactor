@@ -2,8 +2,6 @@
 
 import os
 
-import pytest
-
 from credactor.config import Config, apply_config_file, load_config_file
 
 

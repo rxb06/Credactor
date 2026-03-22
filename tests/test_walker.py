@@ -2,8 +2,6 @@
 
 import os
 
-import pytest
-
 from credactor.config import Config
 from credactor.walker import walk_and_scan
 

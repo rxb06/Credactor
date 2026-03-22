@@ -1,7 +1,6 @@
 """Tests for CLI argument parsing and main entry point."""
 
 import os
-import sys
 
 import pytest
 

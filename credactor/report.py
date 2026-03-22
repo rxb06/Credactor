@@ -150,7 +150,8 @@ def sarif_report(findings: list[dict], root: str) -> str:
                     'text': f'Credactor detected a potential hardcoded credential ({f["type"]})',
                 },
                 'help': {
-                    'text': 'Remove the hardcoded credential and use an environment variable or secrets manager instead.',
+                    'text': ('Remove the hardcoded credential and use an'
+                             ' environment variable or secrets manager instead.'),
                 },
                 'defaultConfiguration': {
                     'level': _sarif_level(f.get('severity', 'medium')),
