@@ -35,6 +35,7 @@ class Config:
     scan_json: bool = False
     no_backup: bool = False
     no_color: bool = False
+    fail_on_error: bool = False
     replace_mode: str = 'sentinel'  # 'sentinel' | 'env' | 'custom'
     custom_replacement: str = 'REDACTED_BY_CREDACTOR'
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'

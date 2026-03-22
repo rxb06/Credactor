@@ -21,7 +21,7 @@ If you use [pre-commit](https://pre-commit.com), add this to your `.pre-commit-c
 ```yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.1.1  # pin to a release tag
+    rev: v2.2.0  # pin to a release tag
     hooks:
       - id: credactor
 ```
@@ -67,11 +67,11 @@ This runs a full scan on every push and pull request to `main`. If Credactor fin
 
 ### SARIF Upload
 
-To surface findings as GitHub Code Scanning alerts, extend the workflow:
+To surface findings as GitHub Code Scanning alerts with precise line and column annotations, extend the workflow:
 
 ```yaml
       - name: Scan for credentials
-        run: credactor . --format sarif -o results.sarif
+        run: credactor --fail-on-error --format sarif . > results.sarif
         continue-on-error: true
 
       - name: Upload SARIF
@@ -81,6 +81,8 @@ To surface findings as GitHub Code Scanning alerts, extend the workflow:
 ```
 
 This requires Code Scanning to be enabled in your repository settings under Security > Code scanning.
+
+`--fail-on-error` ensures the pipeline also fails if any files could not be scanned (e.g. permission errors), rather than silently skipping them.
 
 ## Configuration
 

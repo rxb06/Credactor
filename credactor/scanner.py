@@ -32,7 +32,9 @@ ENTROPY_THRESHOLD = 3.5
 MIN_VALUE_LENGTH = 8
 
 # Max lines to skip inside a PEM block before force-resetting (CVE-02 fix)
-_MAX_PEM_BLOCK_LINES = 100
+# Increased from 100 to 500 to accommodate large RSA/EC keys without
+# false-resetting mid-block.
+_MAX_PEM_BLOCK_LINES = 500
 
 # Max file size to scan (bytes) — skip silently above this (HIGH-05 fix)
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -195,8 +197,8 @@ def scan_line(
             for match in pattern.finditer(line):
                 val = match.group(0)
 
-                # high-entropy string: additional path/slash guard
-                if label == 'high-entropy string':
+                # high-entropy / hex credential: additional path/slash guard
+                if label in ('high-entropy string', 'hex credential'):
                     if val.count('/') > 2:
                         continue
                     start = match.start()
@@ -419,7 +421,7 @@ def _scan_multiline_strings(
                 break
             end_idx = full_text.find(close_delim, idx + len(open_delim))
             if end_idx < 0:
-                break
+                break  # no more closing delimiters — done with this delimiter type
             block = full_text[idx + len(open_delim):end_idx]
             # Determine line number of the opening delimiter
             block_lineno = full_text[:idx].count('\n') + 1

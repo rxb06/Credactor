@@ -198,10 +198,10 @@ class TestScanFile:
         """CVE-02: unclosed PEM block must not suppress subsequent lines."""
         # credactor:ignore
         key = 'AKIA' + 'IOSFODNN7EXAMPLE'
-        # PEM header with no END marker, followed by >100 filler lines,
+        # PEM header with no END marker, followed by >500 filler lines,
         # then a real credential that MUST be detected.
         lines = ['-----BEGIN RSA PRIVATE KEY-----\n']
-        lines += ['filler line\n'] * 105
+        lines += ['filler line\n'] * 505
         lines.append(f'api_key = "{key}"\n')
         content = ''.join(lines)
         path = make_file('unclosed_pem.py', content)

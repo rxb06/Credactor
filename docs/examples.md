@@ -150,11 +150,18 @@ Fail on findings:
   run: python -m credactor --ci .
 ```
 
-Upload SARIF to Code Scanning:
+Strict mode — also fail if any files could not be scanned:
 
 ```yaml
 - name: Credential scan
-  run: python -m credactor --ci --format sarif . > results.sarif
+  run: python -m credactor --ci --fail-on-error .
+```
+
+Upload SARIF to Code Scanning (includes line and column annotations):
+
+```yaml
+- name: Credential scan
+  run: python -m credactor --ci --fail-on-error --format sarif . > results.sarif
   continue-on-error: true
 
 - name: Upload SARIF

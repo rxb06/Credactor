@@ -146,6 +146,12 @@ def sarif_report(findings: list[dict], root: str) -> str:
             rules[rule_id] = {
                 'id': rule_id,
                 'shortDescription': {'text': f['type']},
+                'fullDescription': {
+                    'text': f'Credactor detected a potential hardcoded credential ({f["type"]})',
+                },
+                'help': {
+                    'text': 'Remove the hardcoded credential and use an environment variable or secrets manager instead.',
+                },
                 'defaultConfiguration': {
                     'level': _sarif_level(f.get('severity', 'medium')),
                 },
@@ -156,8 +162,23 @@ def sarif_report(findings: list[dict], root: str) -> str:
         except ValueError:
             rel = f['file']
 
+        # Compute column positions for precise annotation
+        raw_line = f.get('raw', '')
+        full_val = f.get('full_value', '')
+        col_start = raw_line.find(full_val) + 1 if full_val and full_val in raw_line else 1
+        col_end = col_start + len(full_val) if col_start > 0 else None
+
+        region: dict = {
+            'startLine': f['line'],
+            'endLine': f['line'],
+            'startColumn': col_start,
+        }
+        if col_end is not None:
+            region['endColumn'] = col_end
+
         results.append({
             'ruleId': rule_id,
+            'ruleIndex': list(rules.keys()).index(rule_id),
             'level': _sarif_level(f.get('severity', 'medium')),
             'message': {
                 'text': (
@@ -168,7 +189,7 @@ def sarif_report(findings: list[dict], root: str) -> str:
             'locations': [{
                 'physicalLocation': {
                     'artifactLocation': {'uri': rel},
-                    'region': {'startLine': f['line']},
+                    'region': region,
                 },
             }],
         })
@@ -181,6 +202,7 @@ def sarif_report(findings: list[dict], root: str) -> str:
                 'driver': {
                     'name': 'Credactor',
                     'version': __version__,
+                    'informationUri': 'https://github.com/rxb06/Credactor',
                     'rules': list(rules.values()),
                 },
             },

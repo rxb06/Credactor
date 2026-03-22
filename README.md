@@ -21,6 +21,16 @@ Most secret scanners stop at detection. Credactor goes further: it redacts in pl
 pip install credactor
 ```
 
+**Or from source:**
+
+```bash
+git clone https://github.com/rxb06/Credactor.git
+cd Credactor
+pip install -e .
+```
+
+After this, `credactor` works from any directory in your terminal.
+
 ## Quick Start
 
 > **Recommended:** Always run `--dry-run` first and review findings before redacting. False positives are possible — use `# credactor:ignore` or `.credactorignore` to suppress them.
@@ -47,7 +57,7 @@ credactor --ci .
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.1.1
+    rev: v2.2.0
     hooks:
       - id: credactor
 ```
@@ -80,6 +90,8 @@ python -m credactor .
 - Inline `# credactor:ignore` suppression and `.credactorignore` allowlists
 - Per-repo config via `.credactor.toml`
 - Parallel scanning for large repos
+- `--fail-on-error` to catch files that couldn't be scanned (permission errors, encoding issues)
+- SARIF 2.1.0 output with precise column-level annotations for GitHub Code Scanning
 
 ## Scanned File Types
 
@@ -101,7 +113,7 @@ Values: placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `
 |---|---|
 | `0` | No findings, or all resolved |
 | `1` | Unresolved findings |
-| `2` | Error |
+| `2` | Error, or files skipped with `--fail-on-error` |
 
 ## Docs
 

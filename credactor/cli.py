@@ -93,6 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
         '--scan-json', action='store_true',
         help='Include .json files in the scan',
     )
+    config_group.add_argument(
+        '--fail-on-error', action='store_true',
+        help='Exit with code 2 if any files could not be scanned (e.g. permission errors)',
+    )
 
     return parser
 
@@ -111,6 +115,7 @@ def main(argv: list[str] | None = None) -> None:
         scan_json=args.scan_json,
         no_backup=args.no_backup,
         no_color=args.no_color,
+        fail_on_error=args.fail_on_error,
         replace_mode=args.replace_mode,
         custom_replacement=args.replacement,
         output_format=args.output_format,
@@ -146,16 +151,19 @@ def main(argv: list[str] | None = None) -> None:
 
     # --- Dispatch based on mode ---
     findings: list[dict] = []
+    errored_files: list[str] = []
 
     if config.staged_only:
         # #6 — staged files only
-        findings = scan_staged_files(target, config, allowlist)
+        findings, errored_files = scan_staged_files(target, config, allowlist)
     elif config.scan_history:
         # #11 — git history
         findings = scan_git_history(target, config, allowlist)
     else:
         # Normal directory scan (#26 single walk)
-        dir_findings, gitignore_skipped, json_files = walk_and_scan(target, config, allowlist)
+        dir_findings, gitignore_skipped, json_files, errored_files = walk_and_scan(
+            target, config, allowlist,
+        )
         findings = dir_findings
 
         # Report gitignored files
@@ -173,6 +181,16 @@ def main(argv: list[str] | None = None) -> None:
 
             for path in json_paths:
                 findings.extend(scan_file(path, config=config, allowlist=allowlist))
+
+    # Report errored files and fail if --fail-on-error
+    if errored_files:
+        print(f'\n[WARN] {len(errored_files)} file(s) could not be scanned:',
+              file=sys.stderr)
+        for fp in errored_files:
+            print(f'  - {fp}', file=sys.stderr)
+        if config.fail_on_error:
+            print('[ERROR] Exiting due to --fail-on-error.', file=sys.stderr)
+            sys.exit(2)
 
     # --- Output ---
     if not findings:

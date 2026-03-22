@@ -39,10 +39,10 @@ def walk_and_scan(
     root: str,
     config: Config,
     allowlist: Optional[AllowList] = None,
-) -> tuple[list[dict], list[str], list[str]]:
+) -> tuple[list[dict], list[str], list[str], list[str]]:
     """Single-pass directory walk (#26).
 
-    Returns (findings, gitignore_skipped, json_files_available).
+    Returns (findings, gitignore_skipped, json_files_available, errored_files).
     """
     root_path = Path(root).resolve()
     gi_patterns = load_gitignore_patterns(root)
@@ -81,21 +81,25 @@ def walk_and_scan(
                 scannable.append(full_path)
 
     # #27 — parallel file scanning
-    findings = _parallel_scan(scannable, config, allowlist)
+    findings, errored = _parallel_scan(scannable, config, allowlist)
 
-    return findings, gitignore_skipped, json_files
+    return findings, gitignore_skipped, json_files, errored
 
 
 def _parallel_scan(
     files: list[str],
     config: Config,
     allowlist: Optional[AllowList],
-) -> list[dict]:
-    """Scan files using a thread pool (#27)."""
+) -> tuple[list[dict], list[str]]:
+    """Scan files using a thread pool (#27).
+
+    Returns (findings, errored_files).
+    """
     all_findings: list[dict] = []
+    errored: list[str] = []
 
     if not files:
-        return all_findings
+        return all_findings, errored
 
     progress = _progress_callback_factory(len(files), config.no_color)
     done_count = 0
@@ -105,9 +109,14 @@ def _parallel_scan(
     if max_workers <= 1 or len(files) <= 4:
         # Sequential for small batches
         for i, fp in enumerate(files, 1):
-            all_findings.extend(scan_file(fp, config=config, allowlist=allowlist))
+            try:
+                all_findings.extend(scan_file(fp, config=config, allowlist=allowlist))
+            except Exception as exc:
+                errored.append(fp)
+                print(f'[WARN] Error scanning {fp}: {exc}',
+                      file=sys.stderr)
             progress(i)
-        return all_findings
+        return all_findings, errored
 
     lock = threading.Lock()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -123,10 +132,11 @@ def _parallel_scan(
                     all_findings.extend(future.result())
                 except Exception as exc:
                     fp = future_to_file[future]
+                    errored.append(fp)
                     print(f'[WARN] Error scanning {fp}: {exc}',
                           file=sys.stderr)
 
-    return all_findings
+    return all_findings, errored
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +146,11 @@ def scan_staged_files(
     root: str,
     config: Config,
     allowlist: Optional[AllowList] = None,
-) -> list[dict]:
-    """Scan only files staged in the git index (``git diff --cached``)."""
+) -> tuple[list[dict], list[str]]:
+    """Scan only files staged in the git index (``git diff --cached``).
+
+    Returns (findings, errored_files).
+    """
     try:
         result = subprocess.run(
             ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACMR'],
@@ -145,10 +158,10 @@ def scan_staged_files(
         )
         if result.returncode != 0:
             print(f'[ERROR] git diff failed: {result.stderr.strip()}', file=sys.stderr)
-            return []
+            return [], []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
-        return []
+        return [], []
 
     root_path = Path(root).resolve()
     staged = []
@@ -158,7 +171,7 @@ def scan_staged_files(
             staged.append(full_path)
 
     if not staged:
-        return []
+        return [], []
 
     return _parallel_scan(staged, config, allowlist)
 

@@ -7,10 +7,49 @@
 
 ## Install
 
-```bash
-git clone <repo-url>
-cd Credactor
+### From PyPI
 
+```bash
+pip install credactor
+```
+
+### From source (local install)
+
+To install from source so `credactor` works globally from any directory:
+
+```bash
+git clone https://github.com/rxb06/Credactor.git
+cd Credactor
+pip install -e .
+```
+
+If `pip` is managed by `uv` and you're outside a virtualenv, use `pip3` or add `--system`:
+
+```bash
+pip3 install -e .
+# or
+pip install --system -e .
+```
+
+After this, `credactor` is available from any directory in your terminal:
+
+```bash
+credactor --dry-run /path/to/project
+```
+
+To uninstall:
+
+```bash
+pip uninstall credactor
+```
+
+### Run without installing
+
+If you just want to run it from the cloned repo without a global install:
+
+```bash
+git clone https://github.com/rxb06/Credactor.git
+cd Credactor
 python -m credactor --help
 # or
 python credential_redactor.py --help
@@ -121,7 +160,7 @@ python -m credactor --staged --ci
 
 ```yaml
 - name: Credential scan
-  run: python -m credactor --ci --format sarif . > results.sarif
+  run: python -m credactor --ci --fail-on-error --format sarif . > results.sarif
 
 - name: Upload SARIF
   uses: github/codeql-action/upload-sarif@v3
@@ -129,12 +168,14 @@ python -m credactor --staged --ci
     sarif_file: results.sarif
 ```
 
+`--fail-on-error` ensures the pipeline also fails if any files could not be scanned (e.g. permission errors), rather than silently skipping them.
+
 ### GitLab CI
 
 ```yaml
 credential-scan:
   script:
-    - python -m credactor --ci --format json . > credential-report.json
+    - python -m credactor --ci --fail-on-error --format json . > credential-report.json
   artifacts:
     reports:
       codequality: credential-report.json
@@ -145,6 +186,9 @@ credential-scan:
 
 ```bash
 python -m credactor --ci .
+
+# Strict mode: also fail if files were skipped due to errors
+python -m credactor --ci --fail-on-error .
 ```
 
 ## Tests
@@ -172,10 +216,14 @@ credactor/
     walker.py            # directory traversal, parallelism
 tests/
     conftest.py
+    test_cli.py
+    test_config.py
+    test_gitignore.py
     test_patterns.py
     test_redactor.py
     test_report.py
     test_safe_values.py
     test_scanner.py
     test_suppressions.py
+    test_walker.py
 ```

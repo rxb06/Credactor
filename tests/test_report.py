@@ -88,3 +88,72 @@ class TestSarifReport:
         # Secret should be masked
         msg = result['runs'][0]['results'][0]['message']['text']
         assert _AWS_KEY not in msg
+
+    def test_sarif_region_fields(self):
+        """SARIF output should include endLine and column information."""
+        raw_line = f'api_key = "{_AWS_KEY}"'
+        findings = [{
+            'file': '/tmp/test.py',
+            'line': 5,
+            'type': 'variable:api_key',
+            'severity': 'high',
+            'full_value': _AWS_KEY,
+            'value_preview': _AWS_KEY,
+            'raw': raw_line,
+        }]
+        result = json.loads(sarif_report(findings, '/tmp'))
+        region = result['runs'][0]['results'][0]['locations'][0]['physicalLocation']['region']
+        assert region['startLine'] == 5
+        assert region['endLine'] == 5
+        assert region['startColumn'] >= 1
+        assert 'endColumn' in region
+
+    def test_sarif_rule_fields(self):
+        """SARIF rules should include fullDescription and help."""
+        findings = [{
+            'file': '/tmp/test.py',
+            'line': 1,
+            'type': 'variable:api_key',
+            'severity': 'high',
+            'full_value': _AWS_KEY,
+            'value_preview': _AWS_KEY,
+            'raw': f'api_key = "{_AWS_KEY}"',
+        }]
+        result = json.loads(sarif_report(findings, '/tmp'))
+        rules = result['runs'][0]['tool']['driver']['rules']
+        assert len(rules) >= 1
+        rule = rules[0]
+        assert 'fullDescription' in rule
+        assert 'help' in rule
+        assert 'text' in rule['fullDescription']
+        assert 'text' in rule['help']
+
+    def test_sarif_driver_info(self):
+        """SARIF driver should include informationUri."""
+        findings = [{
+            'file': '/tmp/test.py',
+            'line': 1,
+            'type': 'variable:api_key',
+            'severity': 'high',
+            'full_value': _AWS_KEY,
+            'value_preview': _AWS_KEY,
+            'raw': f'api_key = "{_AWS_KEY}"',
+        }]
+        result = json.loads(sarif_report(findings, '/tmp'))
+        driver = result['runs'][0]['tool']['driver']
+        assert 'informationUri' in driver
+        assert 'Credactor' in driver['name']
+
+    def test_sarif_rule_index(self):
+        """SARIF results should include ruleIndex."""
+        findings = [{
+            'file': '/tmp/test.py',
+            'line': 1,
+            'type': 'variable:api_key',
+            'severity': 'high',
+            'full_value': _AWS_KEY,
+            'value_preview': _AWS_KEY,
+            'raw': f'api_key = "{_AWS_KEY}"',
+        }]
+        result = json.loads(sarif_report(findings, '/tmp'))
+        assert 'ruleIndex' in result['runs'][0]['results'][0]

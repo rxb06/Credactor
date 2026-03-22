@@ -61,6 +61,7 @@ In interactive mode each finding is shown and you choose whether to redact it:
 |---|---|
 | `--config PATH` | Explicit config file path |
 | `--scan-json` | Include `.json` files |
+| `--fail-on-error` | Exit 2 if any files could not be scanned (e.g. permission errors) |
 
 ## Replacement Modes
 
@@ -208,7 +209,7 @@ Other protections:
 
 ### SARIF
 
-SARIF 2.1.0 output for GitHub Code Scanning, VS Code SARIF Viewer, or any compatible tool.
+SARIF 2.1.0 output for GitHub Code Scanning, VS Code SARIF Viewer, or any compatible tool. Includes precise line and column ranges (`startLine`, `endLine`, `startColumn`, `endColumn`) for accurate code annotations, plus `ruleIndex`, `fullDescription`, and `help` fields for richer integration.
 
 ## Not Flagged
 
