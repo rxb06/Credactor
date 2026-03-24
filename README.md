@@ -4,6 +4,8 @@
 
 # Credactor
 
+> **TL;DR:** Detect and redact hardcoded credentials before they hit version control. Regex + entropy + context-aware analysis, SARIF output, pre-commit hooks, parallel scanning, automated redaction.
+
 Credactor scans source code for hardcoded secrets — API keys, tokens, passwords, private keys, connection strings — and redacts or replaces them with environment variable references before they reach version control. It runs as a CLI tool, a pre-commit hook, or in CI pipelines. SARIF output integrates directly with GitHub Code Scanning.
 
 
@@ -121,9 +123,8 @@ Values: placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `
 - [User Guide](docs/user-guide.md) — CLI reference, feature walkthrough
 - [Examples](docs/examples.md) — common workflows
 - [Integration](docs/integration.md) — pre-commit hooks, CI setup
+- [Contributing](CONTRIBUTING.md) — dev setup, code style, process
 - [Disclaimer](docs/DISCLAIMER.md) — limitations, safe usage, warranty
-
-> AI Use Transparency: AI was used for code review, bug fixes, security auditing, and documentation structuring. All output was reviewed and validated manually.
 
 ## License
 
