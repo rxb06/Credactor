@@ -75,6 +75,10 @@ _HASH_VAR_SUFFIXES = (
     '_fingerprint', '_hmac', '_encrypted', '_cipher',
 )
 
+# SEC-06: Cap line length to prevent regex backtracking on adversarial input
+# (e.g. minified JS, base64 blobs).  Real credentials never span 4 KiB.
+_MAX_LINE_LENGTH = 4096
+
 # Line-level context check: if the line assigns to a hash/digest variable,
 # hex values on that line are likely hash outputs, not raw credentials
 _HASH_CONTEXT_RE = re.compile(
@@ -184,6 +188,11 @@ def scan_line(
     # #3 — inline suppression
     if has_inline_suppression(line):
         return findings
+
+    # SEC-06: Cap line length to bound worst-case regex execution time
+    if len(line) > _MAX_LINE_LENGTH:
+        line = line[:_MAX_LINE_LENGTH]
+        stripped = line.strip()
 
     ent_threshold = config.entropy_threshold if config else ENTROPY_THRESHOLD
     min_len = config.min_value_length if config else MIN_VALUE_LENGTH
@@ -312,12 +321,10 @@ def scan_file(
     allowlist: Optional[AllowList] = None,
 ) -> list[dict]:
     """Scan a single file for credential findings.
-
-    Addresses #16 (encoding detection), #18 (PEM multi-line).
     """
     findings: list[dict] = []
 
-    # HIGH-05 — file size guard to prevent OOM on huge files
+    #file size guard to prevent OOM on huge files | Hard-Cap at 50MB
     try:
         file_size = Path(filepath).stat().st_size
         if file_size > _MAX_FILE_SIZE:
@@ -329,7 +336,7 @@ def scan_file(
     except OSError:
         pass  # proceed; open() will fail with a better message
 
-    # #16 — detect encoding
+    # detect encoding
     encoding = detect_encoding(filepath)
 
     try:
@@ -343,10 +350,7 @@ def scan_file(
     if lines and lines[0].startswith('\ufeff'):
         lines[0] = lines[0][1:]
 
-    # #18 — PEM private key block detection (multi-line)
-    # CVE-02 fix: track lines inside PEM block; force-reset after
-    # _MAX_PEM_BLOCK_LINES to prevent unclosed blocks from suppressing
-    # the rest of the file.
+    # PEM private key block detection (multi-line)
     in_pem_block = False
     pem_block_lines = 0
     for lineno, line in enumerate(lines, start=1):
@@ -387,7 +391,7 @@ def scan_file(
             findings.extend(scan_line(lineno, line, filepath,
                                       config=config, allowlist=allowlist))
 
-    # #10 — basic multi-line detection: triple-quoted strings in Python
+    # basic multi-line detection: triple-quoted strings in Python
     _scan_multiline_strings(filepath, lines, findings, config, allowlist)
 
     return findings
@@ -401,7 +405,6 @@ def _scan_multiline_strings(
     allowlist: Optional[AllowList],
 ) -> None:
     """Detect credentials inside triple-quoted strings and JS template literals.
-
     This is a best-effort heuristic: it concatenates the contents of multi-line
     string blocks and runs the value-pattern scan on the combined text.
     """
@@ -413,6 +416,10 @@ def _scan_multiline_strings(
     delimiters = [('"""', '"""'), ("'''", "'''"), ('`', '`')]
 
     full_text = ''.join(lines)
+
+    # SEC-19: Cap multiline block size to prevent ReDoS on huge triple-quoted strings
+    _MAX_BLOCK_SIZE = 8192
+
     for open_delim, close_delim in delimiters:
         start = 0
         while True:
@@ -423,6 +430,9 @@ def _scan_multiline_strings(
             if end_idx < 0:
                 break  # no more closing delimiters — done with this delimiter type
             block = full_text[idx + len(open_delim):end_idx]
+            # SEC-19: Truncate oversized blocks to bound regex time
+            if len(block) > _MAX_BLOCK_SIZE:
+                block = block[:_MAX_BLOCK_SIZE]
             # Determine line number of the opening delimiter
             block_lineno = full_text[:idx].count('\n') + 1
             if block_lineno in already_flagged:
@@ -460,9 +470,6 @@ def should_scan_file(
     extra_extensions: set[str] | None = None,
 ) -> bool:
     """Return True if the filename's extension (or name) is in the scan list.
-
-    #15: Handles .env.* variants (e.g. .env.local, .env.production).
-    MED-04: Tightened .env prefix matching to avoid false hits.
     """
     p = Path(filename)
     suffix = p.suffix.lower() or p.name.lower()
@@ -471,8 +478,7 @@ def should_scan_file(
     if suffix in extensions:
         return True
 
-    # #15 — .env.* variants: .env.local, .env.staging, .env.production
-    # MED-04: require .env or .env.<suffix> pattern, not arbitrary .env* prefix
+    # .env.* variants: .env.local, .env.staging, .env.production
     name_lower = p.name.lower()
     if name_lower == '.env' or name_lower == 'env':
         return True

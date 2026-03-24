@@ -1,7 +1,5 @@
 """
 Configuration loading from ``.credactor.toml`` files.
-
-Addresses: #25 (config file support)
 """
 
 from __future__ import annotations
@@ -34,6 +32,8 @@ class Config:
     scan_history: bool = False
     scan_json: bool = False
     no_backup: bool = False
+    secure_backup_dir: str | None = None
+    secure_delete: bool = False
     no_color: bool = False
     fail_on_error: bool = False
     replace_mode: str = 'sentinel'  # 'sentinel' | 'env' | 'custom'
@@ -41,6 +41,21 @@ class Config:
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'
     target: str = '.'
     config_path: Optional[str] = None
+
+
+def _find_project_root(start: Path) -> Path | None:
+    """SEC-02: Walk up from *start* looking for a ``.git`` directory.
+
+    Returns the directory containing ``.git``, or ``None`` if not found.
+    """
+    p = start.resolve()
+    for _ in range(20):  # reasonable upper bound
+        if (p / '.git').exists():
+            return p
+        if p.parent == p:
+            break
+        p = p.parent
+    return None
 
 
 def load_config_file(root: str, explicit_path: Optional[str] = None) -> dict:
@@ -64,8 +79,20 @@ def load_config_file(root: str, explicit_path: Optional[str] = None) -> dict:
                 break
             p = p.parent
 
+    # SEC-02: Determine project root for trust boundary check
+    project_root = _find_project_root(Path(root).resolve())
+
     for candidate in candidates:
         if candidate.is_file():
+            # SEC-02: Warn if config is outside the project root
+            if project_root and not str(candidate.resolve()).startswith(
+                str(project_root)
+            ):
+                print(
+                    f'[WARN] Config loaded from outside project root: '
+                    f'{candidate} (project root: {project_root})',
+                    file=sys.stderr,
+                )
             return _parse_toml(candidate)
 
     return {}
@@ -73,18 +100,23 @@ def load_config_file(root: str, explicit_path: Optional[str] = None) -> dict:
 
 def _parse_toml(path: Path) -> dict:
     """Parse a TOML file. Uses tomllib (3.11+) or tomli as fallback."""
-    if sys.version_info >= (3, 11):
-        import tomllib
-        with open(path, 'rb') as fh:
-            return tomllib.load(fh)
-    else:
-        try:
-            import tomli
+    try:
+        if sys.version_info >= (3, 11):
+            import tomllib
             with open(path, 'rb') as fh:
-                return tomli.load(fh)
-        except ImportError:
-            # Fall back to very basic key=value parsing for simple configs
-            return _basic_toml_parse(path)
+                return tomllib.load(fh)
+        else:
+            try:
+                import tomli
+                with open(path, 'rb') as fh:
+                    return tomli.load(fh)
+            except ImportError:
+                # Fall back to very basic key=value parsing for simple configs
+                return _basic_toml_parse(path)
+    except (OSError, PermissionError) as exc:
+        # SEC-03: Surface config read failures instead of silently ignoring
+        print(f'[WARN] Could not read config {path}: {exc}', file=sys.stderr)
+        return {}
 
 
 def _basic_toml_parse(path: Path) -> dict:
@@ -114,17 +146,30 @@ def _basic_toml_parse(path: Path) -> dict:
                         result[key] = float(val)
                     except ValueError:
                         result[key] = val
-    except (OSError, PermissionError):
-        pass
+    except (OSError, PermissionError) as exc:
+        # SEC-03: Surface config read failures instead of silently ignoring
+        print(f'[WARN] Could not read config {path}: {exc}', file=sys.stderr)
     return result
 
 
 def apply_config_file(config: Config, file_data: dict) -> None:
     """Merge values from a parsed config file into the Config object."""
     if 'entropy_threshold' in file_data:
-        config.entropy_threshold = float(file_data['entropy_threshold'])
+        val = float(file_data['entropy_threshold'])
+        # SEC-12: Bound entropy threshold to valid Shannon entropy range
+        if not 0.0 <= val <= 6.0:
+            print(f'[WARN] entropy_threshold={val} out of valid range (0.0-6.0), '
+                  f'using default 3.5', file=sys.stderr)
+            val = 3.5
+        config.entropy_threshold = val
     if 'min_value_length' in file_data:
-        config.min_value_length = int(file_data['min_value_length'])
+        val_i = int(file_data['min_value_length'])
+        # SEC-12: Bound min_value_length to reasonable range
+        if not 1 <= val_i <= 200:
+            print(f'[WARN] min_value_length={val_i} out of valid range (1-200), '
+                  f'using default 8', file=sys.stderr)
+            val_i = 8
+        config.min_value_length = val_i
     if 'skip_dirs' in file_data:
         config.skip_dirs.update(file_data['skip_dirs'])
     if 'skip_files' in file_data:

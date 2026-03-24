@@ -1,12 +1,11 @@
 """
 Directory walking, git-staged scanning, git-history scanning, and parallelism.
 
-Addresses: #6 (--staged), #11 (--scan-history), #26 (single os.walk),
-           #27 (thread-pool parallelism)
 """
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import subprocess
@@ -40,8 +39,7 @@ def walk_and_scan(
     config: Config,
     allowlist: Optional[AllowList] = None,
 ) -> tuple[list[dict], list[str], list[str], list[str]]:
-    """Single-pass directory walk (#26).
-
+    """Single-pass directory walk
     Returns (findings, gitignore_skipped, json_files_available, errored_files).
     """
     root_path = Path(root).resolve()
@@ -54,8 +52,16 @@ def walk_and_scan(
     extra_skip_dirs = SKIP_DIRS | config.skip_dirs
     extra_skip_files = SKIP_FILES | config.skip_files
 
+    # Forward-only scanning: os.walk descends into children only.
+    # Additionally filter out symlinks that escape the scan root to
+    # prevent traversal into parent or unrelated directories.
+    root_str = str(root_path)
     for dirpath, dirnames, filenames in os.walk(root_path):
-        dirnames[:] = [d for d in dirnames if d not in extra_skip_dirs]
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in extra_skip_dirs
+            and str(Path(os.path.join(dirpath, d)).resolve()).startswith(root_str)
+        ]
         for filename in filenames:
             if filename in extra_skip_files:
                 continue
@@ -119,6 +125,7 @@ def _parallel_scan(
         return all_findings, errored
 
     lock = threading.Lock()
+    emfile_hit = False
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_file = {
             executor.submit(scan_file, fp, config=config, allowlist=allowlist): fp
@@ -130,11 +137,34 @@ def _parallel_scan(
                 progress(done_count)
                 try:
                     all_findings.extend(future.result())
+                except OSError as exc:
+                    fp = future_to_file[future]
+                    # SEC-05: Detect fd exhaustion and fall back
+                    if exc.errno == errno.EMFILE:
+                        emfile_hit = True
+                        errored.append(fp)
+                        print('[WARN] Too many open files — remaining '
+                              'files will be scanned sequentially.',
+                              file=sys.stderr)
+                    else:
+                        errored.append(fp)
+                        print(f'[WARN] Error scanning {fp}: {exc}',
+                              file=sys.stderr)
                 except Exception as exc:
                     fp = future_to_file[future]
                     errored.append(fp)
                     print(f'[WARN] Error scanning {fp}: {exc}',
                           file=sys.stderr)
+
+    # SEC-05: Re-scan files that failed due to fd exhaustion sequentially
+    if emfile_hit:
+        for fp in list(errored):
+            try:
+                results = scan_file(fp, config=config, allowlist=allowlist)
+                all_findings.extend(results)
+                errored.remove(fp)
+            except Exception:
+                pass  # already in errored list
 
     return all_findings, errored
 
@@ -151,10 +181,12 @@ def scan_staged_files(
 
     Returns (findings, errored_files).
     """
+    # SEC-04: Resolve path before passing to subprocess
+    root_path = Path(root).resolve()
     try:
         result = subprocess.run(
             ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACMR'],
-            capture_output=True, text=True, cwd=root, timeout=30,
+            capture_output=True, text=True, cwd=str(root_path), timeout=30,
         )
         if result.returncode != 0:
             print(f'[ERROR] git diff failed: {result.stderr.strip()}', file=sys.stderr)
@@ -162,8 +194,6 @@ def scan_staged_files(
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
         return [], []
-
-    root_path = Path(root).resolve()
     staged = []
     for line in result.stdout.strip().splitlines():
         full_path = str(root_path / line)
@@ -186,11 +216,13 @@ def scan_git_history(
     max_commits: int = 100,
 ) -> list[dict]:
     """Scan ``git log -p`` output for credentials in committed history."""
+    # SEC-04: Resolve path before passing to subprocess
+    root_path = Path(root).resolve()
     try:
         result = subprocess.run(
             ['git', 'log', f'-{max_commits}', '-p', '--diff-filter=ACMR',
              '--no-color', '--format=commit %H'],
-            capture_output=True, text=True, cwd=root, timeout=120,
+            capture_output=True, text=True, cwd=str(root_path), timeout=120,
         )
         if result.returncode != 0:
             print(f'[ERROR] git log failed: {result.stderr.strip()}', file=sys.stderr)
