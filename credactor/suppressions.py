@@ -6,6 +6,7 @@ Addresses: #3 (inline suppression), #4 (allowlist file)
 
 import fnmatch
 import os
+import sys
 from pathlib import Path
 
 from .patterns import SUPPRESS_RE
@@ -55,6 +56,11 @@ class AllowList:
                             continue
                     # glob-like or plain path
                     if any(c in line for c in ('*', '?', '/', os.sep, '.')):
+                        # SEC-13: Warn on overly broad patterns that suppress everything
+                        if line in ('*', '**', '**/*', '*.*'):
+                            print(f'[WARN] .credactorignore contains overly broad '
+                                  f'pattern "{line}" — this suppresses ALL files.',
+                                  file=sys.stderr)
                         self._file_globs.append(line)
                     else:
                         # treat as a value literal to suppress
