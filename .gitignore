@@ -38,5 +38,8 @@ uv.lock
 # Backup files created by credactor
 *.bak
 
+# SEC-07: Temp files from atomic writes (crash residue contains plaintext secrets)
+*.credactor.tmp
+
 # Claude Code
 .claude/
