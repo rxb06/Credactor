@@ -1,8 +1,5 @@
 """
 CLI entry point using argparse.
-
-Addresses: #6 (--staged), #7 (--format), #8 (--dry-run), #24 (argparse),
-           #33 (--fix-all), #34 (exit codes: 0=clean, 1=findings, 2=error)
 """
 
 from __future__ import annotations
@@ -13,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .config import Config, apply_config_file, load_config_file
-from .redactor import fix_all, interactive_review
+from .redactor import _UNSAFE_REPLACEMENT_RE, fix_all, interactive_review
 from .report import json_report, print_gitignore_skipped, print_report, sarif_report
 from .scanner import scan_file
 from .suppressions import AllowList
@@ -23,36 +20,57 @@ from .walker import scan_git_history, scan_staged_files, select_json_files, walk
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='credactor',
-        description='Scan source files for hardcoded credentials and optionally redact them.',
-        epilog='Exit codes: 0 = clean, 1 = unresolved findings, 2 = error',
+        description=(
+            'Detect and redact hardcoded credentials before they hit version control. '
+            'Scans source files for API keys, tokens, passwords, private keys, and '
+            'connection strings using regex signatures, entropy analysis, and '
+            'context-aware variable inspection.'
+        ),
+        epilog=(
+            'Exit codes: 0 = no findings (clean), '
+            '1 = unresolved findings detected, '
+            '2 = error (path not found, permission denied, --fail-on-error)\n\n'
+            'Examples:\n'
+            '  credactor .                          Scan current directory interactively\n'
+            '  credactor --dry-run src/              Preview findings without modifying\n'
+            '  credactor --staged --ci               Pre-commit hook (read-only)\n'
+            '  credactor --fix-all --secure-delete   Redact all and wipe backups\n'
+            '  credactor -f sarif . > report.sarif   GitHub Code Scanning output\n'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument(
         'target', nargs='?', default='.',
-        help='Directory or file to scan (default: current directory)',
+        help='directory or file to scan (default: current directory)',
     )
 
     # Mode flags
-    mode = parser.add_argument_group('mode')
+    mode = parser.add_argument_group('scan mode')
     mode.add_argument(
         '--ci', action='store_true',
-        help='CI mode: report only (no prompts), exit 1 on findings',
+        help='CI/CD mode — report findings and exit 1, no interactive prompts; '
+             'suitable for pipeline gates',
     )
     mode.add_argument(
         '--dry-run', action='store_true',
-        help='Show what would be found/replaced without modifying files',
+        help='show what would be found without modifying any files; '
+             'use this to preview before committing to replacements',
     )
     mode.add_argument(
         '--fix-all', action='store_true',
-        help='Replace all findings without prompting',
+        help='replace all findings in a single batch without prompting; '
+             'asks for confirmation before proceeding',
     )
     mode.add_argument(
         '--staged', action='store_true',
-        help='Scan only git-staged files (for pre-commit hooks)',
+        help='scan only git-staged files (git diff --cached); '
+             'read-only — no files are modified, ideal for pre-commit hooks',
     )
     mode.add_argument(
         '--scan-history', action='store_true',
-        help='Scan git commit history for leaked credentials',
+        help='scan git commit history (up to 100 commits) for leaked credentials; '
+             'reports the commit hash where each secret was introduced',
     )
 
     # Output flags
@@ -60,42 +78,65 @@ def build_parser() -> argparse.ArgumentParser:
     output.add_argument(
         '--format', '-f', choices=['text', 'json', 'sarif'], default='text',
         dest='output_format',
-        help='Output format (default: text)',
+        help='output format: text (human-readable, default), '
+             'json (machine-readable), sarif (SARIF 2.1.0 for GitHub Code Scanning)',
     )
     output.add_argument(
         '--no-color', action='store_true',
-        help='Disable ANSI color output',
+        help='disable ANSI color codes in text output; '
+             'auto-disabled when stdout is not a terminal',
     )
 
     # Replacement flags
-    replace = parser.add_argument_group('replacement')
+    replace = parser.add_argument_group('replacement and backup')
     replace.add_argument(
         '--replace-with', choices=['sentinel', 'env', 'custom'], default='sentinel',
         dest='replace_mode',
-        help='Replacement strategy: sentinel (default), env (language-aware env var ref), custom',
+        help='replacement strategy: '
+             'sentinel = REDACTED_BY_CREDACTOR (fails loudly at runtime), '
+             'env = language-aware env var lookup (e.g. os.environ["KEY"]), '
+             'custom = your own string via --replacement',
     )
     replace.add_argument(
         '--replacement', type=str, default='REDACTED_BY_CREDACTOR',
-        help='Custom replacement string (used with --replace-with=sentinel or custom)',
+        help='custom replacement string used with --replace-with sentinel or custom '
+             '(default: REDACTED_BY_CREDACTOR)',
     )
     replace.add_argument(
         '--no-backup', action='store_true',
-        help='Skip creating .bak backup files before modifying',
+        help='skip creating .bak backup files before modifying; '
+             'WARNING: original file content is lost — only use if git history '
+             'is your safety net',
+    )
+    replace.add_argument(
+        '--secure-backup-dir', type=str, default=None, metavar='DIR',
+        help='store .bak backup files in DIR instead of beside the original files; '
+             'keeps plaintext backups outside the repository tree',
+    )
+    replace.add_argument(
+        '--secure-delete', action='store_true',
+        help='after successful replacement, overwrite .bak files with random data '
+             'and delete them; prevents credential recovery from backups via '
+             'disk forensics',
     )
 
     # Configuration
     config_group = parser.add_argument_group('configuration')
     config_group.add_argument(
-        '--config', type=str, default=None,
-        help='Path to .credactor.toml config file',
+        '--config', type=str, default=None, metavar='PATH',
+        help='path to .credactor.toml config file; by default searches current '
+             'directory and up to 5 parent directories',
     )
     config_group.add_argument(
         '--scan-json', action='store_true',
-        help='Include .json files in the scan',
+        help='include .json files in the scan; by default JSON files are '
+             'collected but only scanned when explicitly requested',
     )
     config_group.add_argument(
         '--fail-on-error', action='store_true',
-        help='Exit with code 2 if any files could not be scanned (e.g. permission errors)',
+        help='exit with code 2 if any files could not be scanned '
+             '(e.g. permission denied, encoding errors); useful in CI to '
+             'ensure complete coverage',
     )
 
     return parser
@@ -114,6 +155,8 @@ def main(argv: list[str] | None = None) -> None:
         scan_history=args.scan_history,
         scan_json=args.scan_json,
         no_backup=args.no_backup,
+        secure_backup_dir=args.secure_backup_dir,
+        secure_delete=args.secure_delete,
         no_color=args.no_color,
         fail_on_error=args.fail_on_error,
         replace_mode=args.replace_mode,
@@ -123,21 +166,60 @@ def main(argv: list[str] | None = None) -> None:
         config_path=args.config,
     )
 
+    # SEC-10: Validate replacement string for code injection
+    if config.replace_mode in ('sentinel', 'custom'):
+        if _UNSAFE_REPLACEMENT_RE.search(config.custom_replacement):
+            print('[ERROR] Replacement string contains potentially dangerous '
+                  'characters that could enable code injection.',
+                  file=sys.stderr)
+            print(f'  Value: {config.custom_replacement!r}', file=sys.stderr)
+            print('  Use only alphanumeric characters, underscores, and hyphens.',
+                  file=sys.stderr)
+            sys.exit(2)
+
+    # SEC-18: Warn if running as root (Unix only)
+    if hasattr(os, 'getuid') and os.getuid() == 0:
+        print('[WARN] Running as root — backup files may have restrictive '
+              'ownership. Consider running as a regular user.',
+              file=sys.stderr)
+
+    # SEC-14: Warn about semantic changes with env replacement
+    if config.replace_mode == 'env' and (config.fix_all or not config.ci_mode):
+        print('[WARN] --replace-with env changes string literals to function calls. '
+              'Ensure environment variables are set before running the modified code.',
+              file=sys.stderr)
+
     # Load config file (#25)
     target = config.target
     if not os.path.exists(target):
         print(f'Error: path not found: {target}', file=sys.stderr)
         sys.exit(2)
 
-    # Guard against scanning system directories
-    _PROTECTED_DIRS = {'/', '/etc', '/usr', '/var', '/boot', '/sys', '/proc',
-                       '/bin', '/sbin', '/lib', '/opt', '/root',
-                       'C:\\', 'C:\\Windows', 'C:\\Program Files'}
+    # Guard against scanning system/sensitive directories
+    # fmt: off
+    _PROTECTED_DIRS = {
+        # --- Linux / macOS ---
+        '/', '/etc', '/usr', '/var', '/boot', '/sys', '/proc',
+        '/bin', '/sbin', '/lib', '/opt', '/root',
+        '/home', '/tmp', '/var/tmp',
+        '/dev', '/run', '/mnt', '/media', '/snap', '/srv',
+        # --- macOS-specific ---
+        '/System', '/Library', '/Applications', '/private',
+        '/Volumes',
+        # --- Windows ---
+        'C:\\', 'C:\\Windows', 'C:\\Windows\\System32',
+        'C:\\Program Files', 'C:\\Program Files (x86)',
+        'C:\\ProgramData', 'C:\\Users',
+    }
+    # fmt: on
     resolved = str(Path(target).resolve())
     if resolved in _PROTECTED_DIRS:
         print(f'Error: refusing to scan system directory: {resolved}',
               file=sys.stderr)
-        print('  Use a project directory instead.', file=sys.stderr)
+        print('  Credactor is designed to scan project directories only.',
+              file=sys.stderr)
+        print('  Point it at your project root (e.g. credactor ./my-project)',
+              file=sys.stderr)
         sys.exit(2)
 
     file_data = load_config_file(target, config.config_path)
@@ -147,20 +229,33 @@ def main(argv: list[str] | None = None) -> None:
     # Suppressions (#3, #4)
     allowlist = AllowList(target)
 
-    print(f'Scanning: {Path(target).resolve()}', file=sys.stderr)
+    # Warning banner — remind user to scan project directories only
+    _resolved_path = Path(target).resolve()
+    print(f'Scanning: {_resolved_path}', file=sys.stderr)
+    print('  Note: Credactor scans forward (into subdirectories) only.',
+          file=sys.stderr)
+    print('  For best results, point it at your project root directory.',
+          file=sys.stderr)
+
+    # SEC-17: Warn if target appears to be on a network mount
+    _resolved_str = str(_resolved_path)
+    if _resolved_str.startswith(('/mnt/', '/media/', '/Volumes/', '/net/')):
+        print('[WARN] Target appears to be on a mounted/network volume. '
+              'Atomic file operations (os.replace) may not be reliable on '
+              'NFS/SMB. Use --dry-run first.', file=sys.stderr)
 
     # --- Dispatch based on mode ---
     findings: list[dict] = []
     errored_files: list[str] = []
 
     if config.staged_only:
-        # #6 — staged files only
+        # staged files only
         findings, errored_files = scan_staged_files(target, config, allowlist)
     elif config.scan_history:
-        # #11 — git history
+        # git history
         findings = scan_git_history(target, config, allowlist)
     else:
-        # Normal directory scan (#26 single walk)
+        # Normal directory scan i.e single walk
         dir_findings, gitignore_skipped, json_files, errored_files = walk_and_scan(
             target, config, allowlist,
         )
@@ -192,7 +287,6 @@ def main(argv: list[str] | None = None) -> None:
             print('[ERROR] Exiting due to --fail-on-error.', file=sys.stderr)
             sys.exit(2)
 
-    # --- Output ---
     if not findings:
         if config.output_format == 'json':
             print(json_report(findings, target))
@@ -210,7 +304,6 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print_report(findings, target, no_color=config.no_color)
 
-    # #34 — exit code semantics (consistent across all formats)
     if config.ci_mode or config.dry_run:
         sys.exit(1)
 
@@ -224,7 +317,13 @@ def main(argv: list[str] | None = None) -> None:
         if not config.no_backup:
             print('  .bak backups will be created (contain original secrets).')
         else:
-            print('  WARNING: --no-backup is set. No backups will be created.')
+            # SEC-11: Strong warning for --fix-all --no-backup (no recovery)
+            print('  ┌─────────────────────────────────────────────────────────┐')
+            print('  │  DANGER: --no-backup is set. Original values will be   │')
+            print('  │  PERMANENTLY LOST. Ensure you have git history or      │')
+            print('  │  another recovery mechanism before proceeding.         │')
+            print('  └─────────────────────────────────────────────────────────┘')
+        print('  Tip: run with --dry-run first to preview changes.')
         try:
             answer = input('  Proceed? [y/N]: ').strip().lower()
         except (KeyboardInterrupt, EOFError):

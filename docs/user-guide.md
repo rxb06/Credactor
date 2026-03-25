@@ -54,6 +54,8 @@ In interactive mode each finding is shown and you choose whether to redact it:
 | `--replace-with custom` | Use your own string |
 | `--replacement STRING` | The custom string |
 | `--no-backup` | Skip `.bak` file creation |
+| `--secure-backup-dir PATH` | Store `.bak` files in a directory outside the repo |
+| `--secure-delete` | Overwrite `.bak` files with random data and delete after successful replacement |
 
 ### Config
 
@@ -163,14 +165,85 @@ test_fixture_token_value
 
 ## Backup and Safety
 
-Modified files get a `.bak` copy first. Skip with `--no-backup`.
+### How backups work
 
-Other protections:
-- File permissions preserved after modification
-- Encoding auto-detected and preserved
-- UTF-8 BOM handled
-- Replacements applied bottom-to-top so line numbers stay correct
-- Credential values masked in all report output — secrets never leak to logs
+When Credactor replaces a credential in a file, it first creates a `.bak` copy of the original file. This is your safety net — if a replacement goes wrong, you can restore the original.
+
+```
+src/config.py          ← modified (credential replaced)
+src/config.py.bak      ← original (still contains the plaintext credential)
+```
+
+The replacement itself uses **atomic writes**: Credactor writes to a temporary file (`.credactor.tmp`), then renames it over the original in a single OS operation. If the process crashes mid-write, the original file is untouched. The temp file is cleaned up automatically via a `finally` block.
+
+### Backup modes
+
+| Flag | Backup created? | Where? | Auto-deleted after replacement? |
+|---|---|---|---|
+| *(default)* | ✅ | `.bak` beside original | ❌ You must delete manually |
+| `--secure-backup-dir /path` | ✅ | In `/path` (outside repo) | ❌ You must delete manually |
+| `--secure-delete` | ✅ | `.bak` beside original | ✅ Overwritten with random bytes, then deleted |
+| `--secure-backup-dir /path --secure-delete` | ✅ | In `/path` | ✅ Overwritten with random bytes, then deleted |
+| `--no-backup` | ❌ | — | N/A |
+
+### Recovering from accidental redaction
+
+If you still have the `.bak` file:
+
+```bash
+# See what changed
+diff src/config.py.bak src/config.py
+
+# Restore the original
+mv src/config.py.bak src/config.py
+```
+
+If you used `--no-backup` or `--secure-delete`, the original is gone. Your options:
+
+```bash
+# If not yet committed — restore from git
+git checkout -- src/config.py
+
+# If the pre-redaction version was committed
+git show HEAD:src/config.py
+```
+
+### Will `.bak` files leak into git?
+
+No — Credactor's `.gitignore` includes `*.bak` and `*.credactor.tmp`. These files are ignored by default and won't appear in `git status` or get staged by `git add .`.
+
+However, an explicit `git add --force *.bak` would override `.gitignore`. If you're worried about this:
+
+- Use `--secure-delete` to auto-wipe backups after replacement
+- Use `--secure-backup-dir /tmp/credactor-bak` to keep backups outside the repo entirely
+- Use `--no-backup` if you're confident and have git history as your safety net
+
+### What `--secure-delete` does internally
+
+1. Reads the backup file's size
+2. Overwrites the entire file with `os.urandom()` bytes (cryptographically random)
+3. Calls `fsync()` to flush to disk
+4. Deletes the file with `os.unlink()`
+
+This prevents recovery of the plaintext credentials from the backup, even with disk forensics tools.
+
+### Pre-commit hook safety
+
+When used as a pre-commit hook with `--staged`, Credactor is **read-only**. It scans staged files and reports findings but never modifies files or creates backups. No credential data is written to disk.
+
+```bash
+# Safe pre-commit usage — scan only, no modifications
+credactor --staged --ci
+```
+
+### Other protections
+
+- **File permissions preserved** — original `chmod` bits restored after replacement
+- **Encoding auto-detected** — UTF-8, Latin-1, UTF-16 handled; round-trip safe with `surrogateescape`
+- **UTF-8 BOM handled** — stripped before scanning, preserved in output
+- **Bottom-to-top replacement** — line numbers stay correct when multiple credentials are in one file
+- **Credential masking** — all output formats (text, JSON, SARIF) show only the first 4 characters of a credential. `full_value` never appears in logs, reports, or error messages
+- **Crash-safe temp files** — `.credactor.tmp` files are cleaned up in a `finally` block even if the process crashes
 
 ## Output Formats
 
