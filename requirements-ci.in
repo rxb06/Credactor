@@ -1,5 +1,5 @@
 # CI/build dependencies — used by .github/workflows/ci.yml and publish.yml
-# Regenerate: pip-compile --generate-hashes --output-file=requirements-ci.txt requirements-ci.in
+# Regenerate: pip-compile --generate-hashes --allow-unsafe requirements-ci.in > requirements-ci.txt
 build
 pytest>=8.0
 ruff>=0.5
