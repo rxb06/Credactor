@@ -1,0 +1,9 @@
+# CI/build dependencies — used by .github/workflows/ci.yml and publish.yml
+# Regenerate: pip-compile --generate-hashes --allow-unsafe requirements-ci.in > requirements-ci.txt
+# NOTE: tomli and exceptiongroup are backports needed on Python <3.11/<3.11 respectively.
+#       pip-compile on 3.11+ omits them, but CI runs on 3.10 which needs them.
+build
+pytest>=8.0
+ruff>=0.5
+tomli>=1.1.0
+exceptiongroup>=1.0
