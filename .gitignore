@@ -41,5 +41,8 @@ uv.lock
 # SEC-07: Temp files from atomic writes (crash residue contains plaintext secrets)
 *.credactor.tmp
 
+# Private maintainer docs (never commit)
+mydocs/
+
 # Claude Code
 .claude/
