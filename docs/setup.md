@@ -168,7 +168,11 @@ python -m credactor --staged --ci
     sarif_file: results.sarif
 ```
 
+`--ci` is read-only by design — it blocks `--fix-all` and forces `--dry-run`. No file modifications are possible in CI mode. In CI, `.credactor.toml` files found outside the project root are refused (not just warned about) to prevent planted configs from weakening scanning.
+
 `--fail-on-error` ensures the pipeline also fails if any files could not be scanned (e.g. permission errors), rather than silently skipping them.
+
+Use `--verbose` in CI to log suppressed findings for audit trails.
 
 ### GitLab CI
 

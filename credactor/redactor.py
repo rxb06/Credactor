@@ -20,6 +20,9 @@ _UNSAFE_REPLACEMENT_RE = re.compile(
     r'[`$\\;|&]|__import__|eval\s*\(|exec\s*\(|system\s*\(|subprocess'
 )
 
+# SEC-28: Track whether plaintext backup warning has been shown this run
+_backup_warned = False
+
 
 # ---------------------------------------------------------------------------
 # Replacement value generation (#5, #30)
@@ -112,6 +115,15 @@ def _create_backup(filepath: str, config: Config) -> str | None:
     except (OSError, PermissionError) as exc:
         print(f'  [WARN] Could not create backup {bak}: {exc}', file=sys.stderr)
         return None
+
+    # SEC-28: Warn once about plaintext backups when not using secure options
+    global _backup_warned
+    if not _backup_warned and not config.secure_delete and not config.secure_backup_dir:
+        print('  [WARN] Plaintext backup created beside original file.',
+              file=sys.stderr)
+        print('    Use --secure-delete to auto-wipe, --secure-backup-dir to store '
+              'outside repo, or --no-backup to skip.', file=sys.stderr)
+        _backup_warned = True
 
     # SEC-01: Move backup to secure directory if configured
     if config.secure_backup_dir:
