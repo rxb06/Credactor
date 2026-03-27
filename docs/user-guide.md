@@ -30,6 +30,7 @@ In interactive mode each finding is shown and you choose whether to redact it:
 
 | Flag | What it does |
 |---|---|
+| `--version` | Show version and exit |
 | `--ci` | Report only, no prompts, exits 1 on findings |
 | `--dry-run` | Show findings without modifying anything |
 | `--fix-all` | Redact all findings, no prompts |
@@ -244,6 +245,8 @@ credactor --staged --ci
 - **Bottom-to-top replacement** — line numbers stay correct when multiple credentials are in one file
 - **Credential masking** — all output formats (text, JSON, SARIF) show only the first 4 characters of a credential. `full_value` never appears in logs, reports, or error messages
 - **Crash-safe temp files** — `.credactor.tmp` files are cleaned up in a `finally` block even if the process crashes
+- **Symlink boundary enforcement** — file symlinks resolving outside the scan root are skipped, preventing exfiltration of external file contents via scan output
+- **SARIF output sanitized** — finding metadata is HTML-escaped to prevent injection in downstream SARIF consumers
 
 ## Output Formats
 

@@ -165,7 +165,7 @@ Upload SARIF to Code Scanning (includes line and column annotations):
   continue-on-error: true
 
 - name: Upload SARIF
-  uses: github/codeql-action/upload-sarif@v3
+  uses: github/codeql-action/upload-sarif@v4
   with:
     sarif_file: results.sarif
 ```

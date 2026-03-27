@@ -163,7 +163,7 @@ python -m credactor --staged --ci
   run: python -m credactor --ci --fail-on-error --format sarif . > results.sarif
 
 - name: Upload SARIF
-  uses: github/codeql-action/upload-sarif@v3
+  uses: github/codeql-action/upload-sarif@v4
   with:
     sarif_file: results.sarif
 ```
@@ -214,6 +214,8 @@ credactor/
     suppressions.py      # inline ignore, allowlist
     utils.py             # entropy, encoding detection
     walker.py            # directory traversal, parallelism
+scripts/
+    audit_wheel.py       # supply chain: verify wheel matches repo
 tests/
     conftest.py
     test_cli.py
@@ -226,4 +228,6 @@ tests/
     test_scanner.py
     test_suppressions.py
     test_walker.py
+requirements-ci.in       # CI dependency source (human-readable)
+requirements-ci.txt      # CI dependency lockfile (hash-pinned)
 ```
