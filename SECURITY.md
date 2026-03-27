@@ -4,8 +4,8 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 2.2.x   | :white_check_mark: |
-| < 2.2   | :x:                |
+| 2.3.x   | :white_check_mark: |
+| < 2.3   | :x:                |
 
 Only the latest minor release receives security patches. We recommend always running the most recent version.
 
@@ -101,6 +101,10 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 - **SEC-23 — File symlink boundary enforcement (v2.2.2):** File symlinks that resolve outside the scan root are now skipped during directory walking. Prevents a malicious repo from using symlinks to exfiltrate secrets from external host files via scan output. Directory symlinks were already filtered; this extends the same protection to file symlinks.
 - **SEC-24 — SARIF output sanitization (v2.2.2):** Finding type and masked secret preview in SARIF `message.text` fields are now HTML-escaped via `html.escape()`. Prevents injection in downstream SARIF consumers that render annotations without sanitizing.
 - **SEC-25 — Git history path traversal guard (v2.2.2):** File paths extracted from `git log -p` output (`+++ b/...`) that contain `..` traversal sequences are rejected. Prevents crafted git history from injecting external file paths into scan reports.
+- **SEC-26 — CI read-only enforcement (v2.3.0):** `--ci` now implies read-only mode. `--ci --fix-all` is rejected as mutually exclusive. Without `--fix-all`, `--ci` forces `--dry-run`. File modifications are impossible in CI mode.
+- **SEC-27 — Suppression audit trail (v2.3.0):** `--verbose` flag emits `[SKIP]` notices to stderr for every suppressed finding, including the suppression reason (inline ignore, allowlist, safe value heuristic, hash context). Enables audit trail in CI logs.
+- **SEC-28 — Plaintext backup warning (v2.3.0):** When redaction creates a `.bak` file without `--secure-delete` or `--secure-backup-dir`, a one-time warning is printed to stderr reminding the user that plaintext credentials remain on disk.
+- **SEC-29 — Config trust boundary enforcement in CI (v2.3.0):** In CI mode, `.credactor.toml` files found outside the project root (git root) are refused instead of loaded with a warning. Prevents planted configs from weakening scanning in untrusted PR scenarios.
 
 ### Supply chain hardening (v2.2.1)
 

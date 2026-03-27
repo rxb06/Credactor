@@ -144,6 +144,11 @@ def build_parser() -> argparse.ArgumentParser:
              '(e.g. permission denied, encoding errors); useful in CI to '
              'ensure complete coverage',
     )
+    config_group.add_argument(
+        '--verbose', '-v', action='store_true',
+        help='show detailed scan activity on stderr including suppressed '
+             'findings, skipped files, and safe-value decisions',
+    )
 
     return parser
 
@@ -173,12 +178,22 @@ def _main_inner(argv: list[str] | None = None) -> None:
         secure_delete=args.secure_delete,
         no_color=args.no_color,
         fail_on_error=args.fail_on_error,
+        verbose=args.verbose,
         replace_mode=args.replace_mode,
         custom_replacement=args.replacement,
         output_format=args.output_format,
         target=args.target,
         config_path=args.config,
     )
+
+    # SEC-26: --ci implies read-only — block file modifications in CI mode
+    if config.ci_mode:
+        if config.fix_all:
+            print('[ERROR] --ci and --fix-all are mutually exclusive. '
+                  '--ci is read-only by design.', file=sys.stderr)
+            sys.exit(2)
+        if not config.dry_run:
+            config.dry_run = True
 
     # SEC-10: Validate replacement string for code injection
     if config.replace_mode in ('sentinel', 'custom'):
@@ -247,7 +262,7 @@ def _main_inner(argv: list[str] | None = None) -> None:
               file=sys.stderr)
         sys.exit(2)
 
-    file_data = load_config_file(target, config.config_path)
+    file_data = load_config_file(target, config.config_path, ci_mode=config.ci_mode)
     if file_data:
         apply_config_file(config, file_data)
 

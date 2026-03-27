@@ -36,6 +36,7 @@ class Config:
     secure_delete: bool = False
     no_color: bool = False
     fail_on_error: bool = False
+    verbose: bool = False
     replace_mode: str = 'sentinel'  # 'sentinel' | 'env' | 'custom'
     custom_replacement: str = 'REDACTED_BY_CREDACTOR'
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'
@@ -58,7 +59,11 @@ def _find_project_root(start: Path) -> Path | None:
     return None
 
 
-def load_config_file(root: str, explicit_path: Optional[str] = None) -> dict:
+def load_config_file(
+    root: str,
+    explicit_path: Optional[str] = None,
+    ci_mode: bool = False,
+) -> dict:
     """Load a .credactor.toml config file and return the raw dict.
 
     Searches for .credactor.toml in root, then parent dirs up to /.
@@ -84,10 +89,18 @@ def load_config_file(root: str, explicit_path: Optional[str] = None) -> dict:
 
     for candidate in candidates:
         if candidate.is_file():
-            # SEC-02: Warn if config is outside the project root
+            # SEC-02 / SEC-29: Config trust boundary check
             if project_root and not str(candidate.resolve()).startswith(
                 str(project_root)
             ):
+                if ci_mode:
+                    # SEC-29: Hard block in CI — never trust external config
+                    print(
+                        f'[ERROR] Refusing to load config from outside project '
+                        f'root in CI mode: {candidate}',
+                        file=sys.stderr,
+                    )
+                    return {}
                 print(
                     f'[WARN] Config loaded from outside project root: '
                     f'{candidate} (project root: {project_root})',

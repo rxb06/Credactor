@@ -31,9 +31,9 @@ In interactive mode each finding is shown and you choose whether to redact it:
 | Flag | What it does |
 |---|---|
 | `--version` | Show version and exit |
-| `--ci` | Report only, no prompts, exits 1 on findings |
+| `--ci` | Read-only mode: report findings and exit 1. Blocks `--fix-all` and forces `--dry-run` |
 | `--dry-run` | Show findings without modifying anything |
-| `--fix-all` | Redact all findings, no prompts |
+| `--fix-all` | Redact all findings, no prompts (cannot combine with `--ci`) |
 | `--staged` | Scan only git-staged files |
 | `--scan-history` | Scan git commit history |
 
@@ -65,6 +65,7 @@ In interactive mode each finding is shown and you choose whether to redact it:
 | `--config PATH` | Explicit config file path |
 | `--scan-json` | Include `.json` files |
 | `--fail-on-error` | Exit 2 if any files could not be scanned (e.g. permission errors) |
+| `--verbose` / `-v` | Show detailed scan activity on stderr: suppressed findings, skipped files, safe-value decisions |
 
 ## Replacement Modes
 
@@ -164,6 +165,25 @@ src/config.py:42
 test_fixture_token_value
 ```
 
+### Suppression audit trail
+
+Use `--verbose` to see every suppression decision on stderr:
+
+```bash
+credactor --verbose --dry-run .
+```
+
+Output includes `[SKIP]` lines with the reason:
+
+```
+  [SKIP] src/config.py:12 suppressed by inline credactor:ignore
+  [SKIP] src/test_data.py suppressed by allowlist (file-level)
+  [SKIP] src/app.py:45 suppressed by safe value heuristic
+  [SKIP] src/db.py:8 suppressed by hash context
+```
+
+This is useful for auditing what credactor chose NOT to flag — especially in CI where you want a complete record.
+
 ## Backup and Safety
 
 ### How backups work
@@ -176,6 +196,8 @@ src/config.py.bak      ← original (still contains the plaintext credential)
 ```
 
 The replacement itself uses **atomic writes**: Credactor writes to a temporary file (`.credactor.tmp`), then renames it over the original in a single OS operation. If the process crashes mid-write, the original file is untouched. The temp file is cleaned up automatically via a `finally` block.
+
+> **Note:** When backups are created without `--secure-delete` or `--secure-backup-dir`, Credactor prints a one-time warning reminding you that plaintext credentials remain on disk. Use `--secure-delete` to auto-wipe, `--secure-backup-dir` to store outside the repo, or `--no-backup` to skip backups entirely.
 
 ### Backup modes
 

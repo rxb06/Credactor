@@ -84,6 +84,9 @@ def walk_and_scan(
 
             # Allowlist file-level suppression
             if allowlist and allowlist.is_file_suppressed(full_path):
+                if config and config.verbose:
+                    print(f'  [SKIP] {full_path} suppressed by allowlist (file-level)',
+                          file=sys.stderr)
                 continue
 
             p = Path(filename)
