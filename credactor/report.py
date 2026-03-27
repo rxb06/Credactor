@@ -7,6 +7,7 @@ Addresses: #2/#29 (masked secrets), #7 (JSON/SARIF), #31 (ANSI color),
 
 from __future__ import annotations
 
+import html
 import json
 import sys
 from pathlib import Path
@@ -183,8 +184,10 @@ def sarif_report(findings: list[dict], root: str) -> str:
             'level': _sarif_level(f.get('severity', 'medium')),
             'message': {
                 'text': (
-                    f'Potential credential detected: {f["type"]}'
-                    f' ({mask_secret(f["full_value"])})'
+                    # SEC-24: HTML-escape masked preview to prevent injection
+                    # in downstream SARIF consumers that render without sanitizing
+                    f'Potential credential detected: {html.escape(f["type"])}'
+                    f' ({html.escape(mask_secret(f["full_value"]))})'
                 ),
             },
             'locations': [{

@@ -67,6 +67,16 @@ def walk_and_scan(
                 continue
             full_path = os.path.join(dirpath, filename)
 
+            # SEC-23: Skip file symlinks that resolve outside the scan root.
+            # Prevents reading/modifying external files via planted symlinks.
+            if os.path.islink(full_path):
+                try:
+                    resolved_file = str(Path(full_path).resolve())
+                    if not resolved_file.startswith(root_str):
+                        continue
+                except OSError:
+                    continue
+
             # Gitignore check
             if gi_patterns and matches_gitignore(full_path, gi_patterns):
                 gitignore_skipped.append(full_path)
@@ -244,6 +254,9 @@ def scan_git_history(
             continue
         if line.startswith('+++ b/'):
             current_file = line[6:]
+            # SEC-25: Reject paths with traversal sequences from git output
+            if '..' in current_file:
+                current_file = ''
             diff_lineno = 0
             continue
         if line.startswith('@@'):

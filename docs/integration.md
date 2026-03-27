@@ -89,9 +89,9 @@ This requires Code Scanning to be enabled in your repository settings under Secu
 Credactor looks for `.credactor.toml` in the project root. Common options:
 
 ```toml
-min_entropy = 3.5
-custom_replacement = "REDACTED"
-no_backup = false
+entropy_threshold = 3.5
+min_value_length = 8
+replacement = "REDACTED_BY_CREDACTOR"
 ```
 
 To suppress false positives on a specific line, add an inline comment:

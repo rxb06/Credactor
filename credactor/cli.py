@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import Config, apply_config_file, load_config_file
 from .redactor import _UNSAFE_REPLACEMENT_RE, fix_all, interactive_review
 from .report import json_report, print_gitignore_skipped, print_report, sarif_report
@@ -38,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
             '  credactor -f sarif . > report.sarif   GitHub Code Scanning output\n'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    parser.add_argument(
+        '--version', action='version',
+        version=f'%(prog)s {__version__}',
     )
 
     parser.add_argument(
@@ -143,6 +149,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    try:
+        _main_inner(argv)
+    except KeyboardInterrupt:
+        print('\nInterrupted.', file=sys.stderr)
+        sys.exit(130)
+
+
+def _main_inner(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -213,10 +227,21 @@ def main(argv: list[str] | None = None) -> None:
     }
     # fmt: on
     resolved = str(Path(target).resolve())
+    # Block system directories
     if resolved in _PROTECTED_DIRS:
         print(f'Error: refusing to scan system directory: {resolved}',
               file=sys.stderr)
         print('  Credactor is designed to scan project directories only.',
+              file=sys.stderr)
+        print('  Point it at your project root (e.g. credactor ./my-project)',
+              file=sys.stderr)
+        sys.exit(2)
+    # Block home directory — too broad, will hang on gitignore walk
+    _home = str(Path.home())
+    if resolved == _home:
+        print(f'Error: refusing to scan home directory: {resolved}',
+              file=sys.stderr)
+        print('  Scanning ~ includes thousands of directories and will hang.',
               file=sys.stderr)
         print('  Point it at your project root (e.g. credactor ./my-project)',
               file=sys.stderr)
