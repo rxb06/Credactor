@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-from .patterns import SUPPRESS_RE
+from .patterns import SCAN_EXTENSIONS, SUPPRESS_RE
 
 
 def has_inline_suppression(line: str) -> bool:
@@ -60,6 +60,16 @@ class AllowList:
                         if line in ('*', '**', '**/*', '*.*'):
                             print(f'[WARN] .credactorignore contains overly broad '
                                   f'pattern "{line}" — this suppresses ALL files.',
+                                  file=sys.stderr)
+                        # SEC-13b: Warn on extension-targeting wildcards that cover
+                        # scannable file types (e.g. "**/*.py", "*.js")
+                        elif any(
+                            line.endswith(ext) and line.lstrip('*').lstrip('/').startswith('*')
+                            or line == f'*{ext}'
+                            for ext in SCAN_EXTENSIONS
+                        ):
+                            print(f'[WARN] .credactorignore pattern "{line}" may '
+                                  f'suppress many scannable files.',
                                   file=sys.stderr)
                         self._file_globs.append(line)
                     else:

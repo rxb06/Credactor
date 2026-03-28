@@ -207,9 +207,28 @@ def scan_staged_files(
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
         return [], []
+    raw_staged = result.stdout.strip().splitlines()
+
+    # SEC-31: Warn if suppression/config files are staged alongside code.
+    # A malicious contributor could add .credactor.toml with extra_safe_values
+    # or .credactorignore patterns to silently disable detection in the same PR.
+    _CONFIG_BASENAMES = {'.credactor.toml', '.credactorignore'}
+    staged_configs = [f for f in raw_staged if Path(f).name in _CONFIG_BASENAMES]
+    if staged_configs:
+        print('[WARN] Suppression/config files staged alongside code changes: '
+              f'{", ".join(staged_configs)}. '
+              'Review these for detection-bypass attempts.',
+              file=sys.stderr)
+
     staged = []
-    for line in result.stdout.strip().splitlines():
+    for line in raw_staged:
+        # SEC-32: Reject paths with traversal sequences (consistent with SEC-25)
+        if '..' in line:
+            continue
         full_path = str(root_path / line)
+        resolved = str(Path(full_path).resolve())
+        if not resolved.startswith(str(root_path)):
+            continue
         if os.path.isfile(full_path) and should_scan_file(line, config.extra_extensions):
             staged.append(full_path)
 

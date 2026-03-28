@@ -1,6 +1,9 @@
 """Tests for the redaction/replacement logic."""
 
 import os
+import sys
+
+import pytest
 
 from credactor.config import Config
 from credactor.redactor import _derive_env_var_name, batch_replace_in_file
@@ -75,6 +78,8 @@ class TestBatchReplace:
         with open(path) as f:
             assert 'REDACTED_BY_CREDACTOR' in f.read()
 
+    @pytest.mark.skipif(sys.platform == 'win32',
+                        reason='Windows does not support Unix-style permission bits')
     def test_preserves_file_permissions(self, make_file):
         config = Config(no_backup=True)
         path = make_file('perms.py', 'api_key = "mysecretkey123456"\n')
@@ -108,7 +113,7 @@ class TestEnvVarReplacement:
         batch_replace_in_file(path, [finding], config)
         with open(path) as f:
             content = f.read()
-        assert 'process.env.API_KEY' in content
+        assert 'process.env["API_KEY"]' in content
 
 
 class TestDeriveEnvVarName:
@@ -120,3 +125,51 @@ class TestDeriveEnvVarName:
 
     def test_pattern_type(self):
         assert _derive_env_var_name({'type': 'pattern:AWS access key'}) == 'AWS_ACCESS_KEY'
+
+    def test_sec30_sanitizes_xml_injection(self):
+        """SEC-30: Adversarial xml_key with JS syntax must be stripped."""
+        result = _derive_env_var_name(
+            {'type': 'xml-attr:password]);require("child_process").exec("pwned")//'}
+        )
+        # Only alphanumeric + underscore should survive
+        assert result.isidentifier()
+        assert ']' not in result
+        assert ')' not in result
+        assert ';' not in result
+        assert '(' not in result
+        assert '"' not in result
+
+    def test_sec30_sanitizes_shell_injection(self):
+        """SEC-30: Adversarial xml_key with shell metacharacters must be stripped."""
+        result = _derive_env_var_name(
+            {'type': 'xml-attr:password};rm -rf /;${x'}
+        )
+        assert result.isidentifier()
+        assert ';' not in result
+        assert ' ' not in result
+        assert '{' not in result
+
+    def test_sec30_empty_after_sanitize_returns_credential(self):
+        """SEC-30: If sanitization strips everything, return fallback."""
+        result = _derive_env_var_name({'type': 'xml-attr:]);()'})
+        assert result == 'CREDENTIAL'
+
+
+class TestEnvRefForLanguage:
+    """SEC-30: Verify bracket notation for JS and quoting for other languages."""
+
+    def test_js_bracket_notation(self):
+        from credactor.redactor import _env_ref_for_language
+        assert _env_ref_for_language('API_KEY', '.js') == 'process.env["API_KEY"]'
+
+    def test_ts_bracket_notation(self):
+        from credactor.redactor import _env_ref_for_language
+        assert _env_ref_for_language('API_KEY', '.ts') == 'process.env["API_KEY"]'
+
+    def test_python_quoted(self):
+        from credactor.redactor import _env_ref_for_language
+        assert _env_ref_for_language('API_KEY', '.py') == 'os.environ["API_KEY"]'
+
+    def test_go_quoted(self):
+        from credactor.redactor import _env_ref_for_language
+        assert _env_ref_for_language('API_KEY', '.go') == 'os.Getenv("API_KEY")'
