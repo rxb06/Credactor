@@ -1,21 +1,14 @@
 [![PyPI](https://img.shields.io/pypi/v/credactor)](https://pypi.org/project/credactor/)
 [![CI](https://github.com/rxb06/Credactor/actions/workflows/ci.yml/badge.svg)](https://github.com/rxb06/Credactor/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/licence-Apache%202.0-blue)](LICENSE)
 
 # Credactor
 
-> **TL;DR:** Detect and redact hardcoded credentials before they hit version control. Regex + entropy + context-aware analysis, SARIF output, pre-commit hooks, parallel scanning, automated redaction.
+> Detect and redact hardcoded credentials before they hit version control.
 
-Credactor scans source code for hardcoded secrets — API keys, tokens, passwords, private keys, connection strings — and redacts or replaces them with environment variable references before they reach version control. It runs as a CLI tool, a pre-commit hook, or in CI pipelines. SARIF output integrates directly with GitHub Code Scanning.
-
+Credactor scans source code for hardcoded secrets: API keys, tokens, passwords, private keys, connection strings, and redacts or replaces them with environment variable references. It runs as a CLI tool, a pre-commit hook, or in CI pipelines with SARIF output for GitHub Code Scanning.
 
 <img width="1280" height="640" alt="credactor" src="https://github.com/user-attachments/assets/f1f94a9c-feea-4b8b-9ea4-81f25f07c4df" />
-
----
-
-## Why Credactor?
-
-Most secret scanners stop at detection. Credactor goes further: it redacts in place, generates language-aware env var replacements (`os.environ` in Python, `process.env` in JS, `System.getenv` in Java), and assigns severity levels so you can triage critical findings first instead of wading through noise.
 
 ## Install
 
@@ -23,109 +16,39 @@ Most secret scanners stop at detection. Credactor goes further: it redacts in pl
 pip install credactor
 ```
 
-**Or from source:**
-
-```bash
-git clone https://github.com/rxb06/Credactor.git
-cd Credactor
-pip install -e .
-```
-
-After this, `credactor` works from any directory in your terminal.
-
 ## Quick Start
 
-> **Recommended:** Always run `--dry-run` first and review findings before redacting. False positives are possible — use `# credactor:ignore` or `.credactorignore` to suppress them.
-
 ```bash
-# Scan current directory (dry run first)
+# Scan (dry run first — always review before redacting)
 credactor --dry-run .
 
-# Scan and interactively redact
+# Interactive redaction
 credactor .
 
-# Redact everything without prompting
+# Batch redaction
 credactor --fix-all .
 
-# CI mode — exit 1 on findings
+# CI mode (read-only, exit 1 on findings)
 credactor --ci .
 ```
 
-### Pre-commit Hook (Beta)
+## Why Credactor?
 
-> Hook-based scanning is in beta. Run `credactor --dry-run .` manually before relying on hooks alone.
+Most secret scanners stop at detection. Credactor goes further: it redacts in place, generates language-aware env var replacements (`os.environ` in Python, `process.env` in JS, `System.getenv` in Java), and assigns severity levels so you can triage critical findings first.
 
-```yaml
-# .pre-commit-config.yaml
-repos:
-  - repo: https://github.com/rxb06/Credactor
-    rev: v2.3.0
-    hooks:
-      - id: credactor
-```
+## Documentation
 
-Or run as a module:
+| Document | Description |
+|----------|-------------|
+| [Setup Guide](docs/setup.md) | Installation, configuration, CI/CD integration |
+| [User Guide](docs/user-guide.md) | CLI reference, replacement modes, backup safety |
+| [Examples](docs/examples.md) | Common workflows with output |
+| [Integration](docs/integration.md) | Pre-commit hooks, CI pipelines |
+| [Security](docs/security.md) | Threat model, hardening measures, known limitations |
+| [Changelog](CHANGELOG.md) | Version history |
+| [Contributing](CONTRIBUTING.md) | Development setup, code style, PR process |
+| [Disclaimer](docs/DISCLAIMER.md) | Limitations, safe usage, warranty |
 
-```bash
-python -m credactor .
-```
-
-## Detection
-
-| Category | Examples | Severity |
-|---|---|---|
-| Cloud provider keys | AWS (`AKIA...`), GCP (`AIza...`), Stripe (`sk_live_...`), Slack (`xoxb-...`) | Critical |
-| Platform tokens | GitHub (`ghp_`, `github_pat_`), GitLab (`glpat-`), npm (`npm_`), PyPI (`pypi-`) | Critical |
-| Private keys | PEM blocks (`-----BEGIN RSA PRIVATE KEY-----`) | Critical |
-| JWT tokens | `eyJ...` three-segment tokens | High |
-| Connection strings | `postgresql://user:pass@host`, `mongodb+srv://...`, `redis://...` | High |
-| Variable assignments | `password = "..."`, `api_key = "..."`, `db_password = "..."` | High/Medium |
-| XML attributes | `<add key="Password" value="..." />` | High |
-| High-entropy strings | Hex (32-64 chars), Base64 (60+ chars) | Medium/Low |
-
-## Features
-
-- Entropy-based detection with per-pattern thresholds to cut false positives
-- Interactive or batch redaction — review one-by-one, or `--fix-all`
-- Git history scanning via `--scan-history`
-- `.bak` backups before any file modification
-- Inline `# credactor:ignore` suppression and `.credactorignore` allowlists
-- Per-repo config via `.credactor.toml`
-- Parallel scanning for large repos
-- `--fail-on-error` to catch files that couldn't be scanned (permission errors, encoding issues)
-- SARIF 2.1.0 output with precise column-level annotations for GitHub Code Scanning
-
-## Scanned File Types
-
-`.py` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bash` `.env` `.env.*` `.cfg` `.ini` `.toml` `.yaml` `.yml` `.rb` `.go` `.java` `.php` `.cs` `.kt` `.tf` `.hcl` `.conf` `.properties` `.xml`
-
-JSON files are excluded by default due to high false-positive rates from API response data. Use `--scan-json` to include them.
-
-## Auto-Skipped
-
-Directories: `.git`, `__pycache__`, `node_modules`, `.venv`, `venv`, `.tox`, `dist`, `build`
-
-Files: `package-lock.json`, `yarn.lock`, `poetry.lock`, `pnpm-lock.yaml`
-
-Values: placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `${VAR}`), function calls, file paths, URLs without credentials, dynamic lookups (`os.getenv()`, Vault/SOPS refs)
-
-## Exit Codes
-
-| Code | Meaning |
-|---|---|
-| `0` | No findings, or all resolved |
-| `1` | Unresolved findings |
-| `2` | Error, or files skipped with `--fail-on-error` |
-
-## Docs
-
-- [Setup Guide](docs/setup.md) — install, config, CI
-- [User Guide](docs/user-guide.md) — CLI reference, feature walkthrough
-- [Examples](docs/examples.md) — common workflows
-- [Integration](docs/integration.md) — pre-commit hooks, CI setup
-- [Contributing](CONTRIBUTING.md) — dev setup, code style, process
-- [Disclaimer](docs/DISCLAIMER.md) — limitations, safe usage, warranty
-
-## License
+## Licence
 
 Apache 2.0. See [LICENSE](LICENSE).

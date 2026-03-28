@@ -1,6 +1,8 @@
 # Integration Guide
 
-The recommended workflow is to run Credactor manually before committing:
+## Recommended Workflow
+
+Run Credactor manually before committing:
 
 ```bash
 credactor --dry-run .
@@ -12,16 +14,16 @@ Pre-commit hooks and CI pipelines automate this further, but a manual scan is th
 
 ## Pre-commit Hook (Beta)
 
-> Hook-based scanning is in beta. We recommend running `credactor --dry-run .` manually before relying on hooks exclusively.
+> Hook-based scanning is in beta. Run `credactor --dry-run .` manually before relying on hooks exclusively.
 
 ### Pre-commit Framework
 
-If you use [pre-commit](https://pre-commit.com), add this to your `.pre-commit-config.yaml`:
+If you use [pre-commit](https://pre-commit.com), add this to `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.3.1  # pin to a release tag
+    rev: v2.3.2  # pin to a release tag
     hooks:
       - id: credactor
 ```
@@ -36,14 +38,7 @@ Every `git commit` will now scan staged files automatically. The commit is block
 
 ### Standalone Git Hook
 
-No framework needed. Copy the provided script into your repo:
-
-```bash
-cp hooks/pre-commit .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
-```
-
-Or create your own `.git/hooks/pre-commit`:
+No framework needed. Create `.git/hooks/pre-commit`:
 
 ```bash
 #!/usr/bin/env bash
@@ -54,58 +49,75 @@ if ! command -v credactor &>/dev/null; then
     exit 1
 fi
 
-credactor --staged
+credactor --staged --ci
 ```
 
-Requires `credactor` to be installed in your environment (`pip install credactor`).
+Make it executable:
 
-## CI Pipeline (Safety Net)
+```bash
+chmod +x .git/hooks/pre-commit
+```
 
-Copy [`examples/ci-credactor.yml`](../examples/ci-credactor.yml) to `.github/workflows/credactor.yml` in your repository.
+`--ci` exits 1 on findings, blocking the commit. `--staged` scans only staged files. This mode is **read-only** — no file modifications or backups are created.
 
-This runs a full scan on every push and pull request to `main`. If Credactor finds credentials, the workflow fails and blocks the merge.
+## CI Pipeline
 
-### SARIF Upload
+### GitHub Actions
 
-To surface findings as GitHub Code Scanning alerts with precise line and column annotations, extend the workflow:
+Basic — fail on findings:
 
 ```yaml
-      - name: Scan for credentials
-        run: credactor --fail-on-error --format sarif . > results.sarif
-        continue-on-error: true
-
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: results.sarif
+- name: Credential scan
+  run: credactor --ci .
 ```
 
-This requires Code Scanning to be enabled in your repository settings under Security > Code scanning.
+Strict — also fail if files could not be scanned:
 
-`--fail-on-error` ensures the pipeline also fails if any files could not be scanned (e.g. permission errors), rather than silently skipping them.
+```yaml
+- name: Credential scan
+  run: credactor --ci --fail-on-error .
+```
+
+SARIF upload to Code Scanning:
+
+```yaml
+- name: Credential scan
+  run: credactor --ci --fail-on-error --format sarif . > results.sarif
+  continue-on-error: true
+
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v4
+  with:
+    sarif_file: results.sarif
+```
+
+Use `--verbose` in CI to log suppressed findings for audit trails.
+
+### GitLab CI
+
+```yaml
+credential-scan:
+  script:
+    - credactor --ci --fail-on-error --format json . > credential-report.json
+  artifacts:
+    reports:
+      codequality: credential-report.json
+  allow_failure: false
+```
+
+### Generic
+
+```bash
+credactor --ci .
+credactor --ci --fail-on-error .  # strict mode
+```
+
+### CI Security Notes
+
+- `--ci` is read-only by design — it blocks `--fix-all` and forces `--dry-run`.
+- In CI mode, `.credactor.toml` files outside the project root are refused (SEC-29).
+- `--fail-on-error` ensures files skipped due to permissions are not silently ignored.
 
 ## Configuration
 
-Credactor looks for `.credactor.toml` in the project root. Common options:
-
-```toml
-entropy_threshold = 3.5
-min_value_length = 8
-replacement = "REDACTED_BY_CREDACTOR"
-```
-
-To suppress false positives on a specific line, add an inline comment:
-
-```python
-API_KEY = "not-a-real-key"  # credactor:ignore
-```
-
-To exclude entire files, add patterns to `.credactorignore`:
-
-```
-tests/*.py
-fixtures/
-*.test.js
-```
-
-See the [User Guide](user-guide.md) for the full list of CLI flags and config options.
+See the [User Guide](user-guide.md) for the full list of CLI flags, config options, and suppression mechanisms.

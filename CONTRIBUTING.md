@@ -6,7 +6,7 @@ Thanks for your interest in Credactor. Bug reports, feature requests, and pull r
 
 ```bash
 git clone https://github.com/rxb06/Credactor.git
-cd Credactor
+cd Credator
 pip install -e ".[dev]"
 ```
 
@@ -25,7 +25,7 @@ python -m build
 python scripts/audit_wheel.py
 ```
 
-The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contains only files tracked in the git repo. This is a supply chain protection — see [SECURITY.md](SECURITY.md) for details.
+The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contains only files tracked in the git repo. See [docs/security.md](docs/security.md#supply-chain-hardening) for details.
 
 ## Code Style
 
@@ -36,6 +36,7 @@ The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contain
 ## CI Pipeline
 
 Every PR runs:
+
 - **test** — pytest across Python 3.10–3.13
 - **self-scan** — Credactor scans its own codebase (SARIF uploaded to Code Scanning)
 - **build-audit** — builds the wheel and verifies contents match the repo

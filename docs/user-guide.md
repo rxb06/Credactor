@@ -6,11 +6,11 @@
 
 ```bash
 # Dry run first — review before modifying anything
-python -m credactor --dry-run .
+credactor --dry-run .
 
 # Scan a specific path
-python -m credactor /path/to/project
-python -m credactor src/config.py
+credactor /path/to/project
+credactor src/config.py
 ```
 
 In interactive mode each finding is shown and you choose whether to redact it:
@@ -28,28 +28,28 @@ In interactive mode each finding is shown and you choose whether to redact it:
 
 ### Mode
 
-| Flag | What it does |
-|---|---|
+| Flag | Description |
+|------|-------------|
 | `--version` | Show version and exit |
 | `--ci` | Read-only mode: report findings and exit 1. Blocks `--fix-all` and forces `--dry-run` |
 | `--dry-run` | Show findings without modifying anything |
-| `--fix-all` | Redact all findings, no prompts (cannot combine with `--ci`) |
+| `--fix-all` | Redact all findings without prompts (cannot combine with `--ci`) |
 | `--staged` | Scan only git-staged files |
 | `--scan-history` | Scan git commit history |
 
 ### Output
 
-| Flag | What it does |
-|---|---|
-| `--format text` | Human-readable with colors (default) |
+| Flag | Description |
+|------|-------------|
+| `--format text` | Human-readable with colours (default) |
 | `--format json` | Machine-readable JSON |
 | `--format sarif` | SARIF 2.1.0 for GitHub Code Scanning |
 | `--no-color` | Strip ANSI codes |
 
 ### Replacement
 
-| Flag | What it does |
-|---|---|
+| Flag | Description |
+|------|-------------|
 | `--replace-with sentinel` | Use `REDACTED_BY_CREDACTOR` (default) |
 | `--replace-with env` | Language-appropriate env var lookup |
 | `--replace-with custom` | Use your own string |
@@ -58,10 +58,10 @@ In interactive mode each finding is shown and you choose whether to redact it:
 | `--secure-backup-dir PATH` | Store `.bak` files in a directory outside the repo |
 | `--secure-delete` | Overwrite `.bak` files with random data and delete after successful replacement |
 
-### Config
+### Configuration
 
-| Flag | What it does |
-|---|---|
+| Flag | Description |
+|------|-------------|
 | `--config PATH` | Explicit config file path |
 | `--scan-json` | Include `.json` files |
 | `--fail-on-error` | Exit 2 if any files could not be scanned (e.g. permission errors) |
@@ -69,7 +69,7 @@ In interactive mode each finding is shown and you choose whether to redact it:
 
 ## Replacement Modes
 
-### Sentinel (default)
+### Sentinel (Default)
 
 ```python
 # Before
@@ -90,8 +90,8 @@ api_key = os.environ["API_KEY"]
 ```
 
 ```javascript
-// JavaScript
-const apiKey = process.env.API_KEY;
+// JavaScript / TypeScript
+const apiKey = process.env["API_KEY"];
 ```
 
 ```go
@@ -122,13 +122,26 @@ API_KEY=${API_KEY}
 ### Custom
 
 ```bash
-python -m credactor --replace-with custom --replacement "TODO_REPLACE_ME"
+credactor --replace-with custom --replacement "TODO_REPLACE_ME"
 ```
 
-## Severity
+## Detection
 
-| Level | Color | What triggers it |
-|---|---|---|
+| Category | Examples | Severity |
+|----------|----------|----------|
+| Cloud provider keys | AWS (`AKIA...`), GCP (`AIza...`), Stripe (`sk_live_...`), Slack (`xoxb-...`) | Critical |
+| Platform tokens | GitHub (`ghp_`, `github_pat_`), GitLab (`glpat-`), npm (`npm_`), PyPI (`pypi-`) | Critical |
+| Private keys | PEM blocks (`-----BEGIN RSA PRIVATE KEY-----`) | Critical |
+| JWT tokens | `eyJ...` three-segment tokens | High |
+| Connection strings | `postgresql://user:pass@host`, `mongodb+srv://...` | High |
+| Variable assignments | `password = "..."`, `api_key = "..."` | High/Medium |
+| XML attributes | `<add key="Password" value="..." />` | High |
+| High-entropy strings | Hex (32–64 chars), Base64 (60+ chars) | Medium/Low |
+
+### Severity Levels
+
+| Level | Colour | Triggers |
+|-------|--------|----------|
 | Critical | Red | Deterministic match — provider prefix, PEM key. Near-zero false positives. |
 | High | Red | Strong match — JWT, connection string, high-entropy password variable. |
 | Medium | Yellow | Heuristic — hex string, Stripe test key, generic credential variable. |
@@ -165,7 +178,7 @@ src/config.py:42
 test_fixture_token_value
 ```
 
-### Suppression audit trail
+### Suppression Audit Trail
 
 Use `--verbose` to see every suppression decision on stderr:
 
@@ -182,13 +195,27 @@ Output includes `[SKIP]` lines with the reason:
   [SKIP] src/db.py:8 suppressed by hash context
 ```
 
-This is useful for auditing what credactor chose NOT to flag — especially in CI where you want a complete record.
+This is useful for auditing what Credactor chose NOT to flag — especially in CI where you want a complete record.
+
+## Scanned File Types
+
+`.py` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bash` `.env` `.env.*` `.cfg` `.ini` `.toml` `.yaml` `.yml` `.rb` `.go` `.java` `.php` `.cs` `.kt` `.tf` `.hcl` `.conf` `.properties` `.xml`
+
+JSON files are excluded by default due to high false-positive rates from API response data. Use `--scan-json` to include them.
+
+## Auto-Skipped
+
+**Directories:** `.git`, `__pycache__`, `node_modules`, `.venv`, `venv`, `.tox`, `dist`, `build`
+
+**Files:** `package-lock.json`, `yarn.lock`, `poetry.lock`, `pnpm-lock.yaml`
+
+**Values:** placeholders (`your_api_key`, `changeme`), env var references (`$VAR`, `${VAR}`), function calls, file paths, URLs without credentials, dynamic lookups (`os.getenv()`, Vault/SOPS refs)
 
 ## Backup and Safety
 
-### How backups work
+### How Backups Work
 
-When Credactor replaces a credential in a file, it first creates a `.bak` copy of the original file. This is your safety net — if a replacement goes wrong, you can restore the original.
+When Credactor replaces a credential in a file, it first creates a `.bak` copy of the original. This is your safety net — if a replacement goes wrong, you can restore the original.
 
 ```
 src/config.py          ← modified (credential replaced)
@@ -197,19 +224,19 @@ src/config.py.bak      ← original (still contains the plaintext credential)
 
 The replacement itself uses **atomic writes**: Credactor writes to a temporary file (`.credactor.tmp`), then renames it over the original in a single OS operation. If the process crashes mid-write, the original file is untouched. The temp file is cleaned up automatically via a `finally` block.
 
-> **Note:** When backups are created without `--secure-delete` or `--secure-backup-dir`, Credactor prints a one-time warning reminding you that plaintext credentials remain on disk. Use `--secure-delete` to auto-wipe, `--secure-backup-dir` to store outside the repo, or `--no-backup` to skip backups entirely.
+> **Note:** When backups are created without `--secure-delete` or `--secure-backup-dir`, Credactor prints a one-time warning reminding you that plaintext credentials remain on disc. Use `--secure-delete` to auto-wipe, `--secure-backup-dir` to store outside the repo, or `--no-backup` to skip backups entirely.
 
-### Backup modes
+### Backup Modes
 
 | Flag | Backup created? | Where? | Auto-deleted after replacement? |
-|---|---|---|---|
+|------|----------------|--------|--------------------------------|
 | *(default)* | ✅ | `.bak` beside original | ❌ You must delete manually |
 | `--secure-backup-dir /path` | ✅ | In `/path` (outside repo) | ❌ You must delete manually |
 | `--secure-delete` | ✅ | `.bak` beside original | ✅ Overwritten with random bytes, then deleted |
 | `--secure-backup-dir /path --secure-delete` | ✅ | In `/path` | ✅ Overwritten with random bytes, then deleted |
 | `--no-backup` | ❌ | — | N/A |
 
-### Recovering from accidental redaction
+### Recovering from Accidental Redaction
 
 If you still have the `.bak` file:
 
@@ -231,44 +258,35 @@ git checkout -- src/config.py
 git show HEAD:src/config.py
 ```
 
-### Will `.bak` files leak into git?
+### Will `.bak` Files Leak into Git?
 
-No — Credactor's `.gitignore` includes `*.bak` and `*.credactor.tmp`. These files are ignored by default and won't appear in `git status` or get staged by `git add .`.
+No — Credactor's `.gitignore` includes `*.bak` and `*.credactor.tmp`. These files are ignored by default and will not appear in `git status` or get staged by `git add .`.
 
-However, an explicit `git add --force *.bak` would override `.gitignore`. If you're worried about this:
+However, an explicit `git add --force *.bak` would override `.gitignore`. If you are worried about this:
 
 - Use `--secure-delete` to auto-wipe backups after replacement
-- Use `--secure-backup-dir /tmp/credactor-bak` to keep backups outside the repo entirely
-- Use `--no-backup` if you're confident and have git history as your safety net
+- Use `--secure-backup-dir /tmp/credactor-bak` to keep backups outside the repo
+- Use `--no-backup` if you are confident and have git history as your safety net
 
-### What `--secure-delete` does internally
+### What `--secure-delete` Does
 
 1. Reads the backup file's size
 2. Overwrites the entire file with `os.urandom()` bytes (cryptographically random)
-3. Calls `fsync()` to flush to disk
+3. Calls `fsync()` to flush to disc
 4. Deletes the file with `os.unlink()`
 
-This prevents recovery of the plaintext credentials from the backup, even with disk forensics tools.
+This prevents recovery of the plaintext credentials from the backup, even with disc forensics tools.
 
-### Pre-commit hook safety
-
-When used as a pre-commit hook with `--staged`, Credactor is **read-only**. It scans staged files and reports findings but never modifies files or creates backups. No credential data is written to disk.
-
-```bash
-# Safe pre-commit usage — scan only, no modifications
-credactor --staged --ci
-```
-
-### Other protections
+### Other Protections
 
 - **File permissions preserved** — original `chmod` bits restored after replacement
 - **Encoding auto-detected** — UTF-8, Latin-1, UTF-16 handled; round-trip safe with `surrogateescape`
 - **UTF-8 BOM handled** — stripped before scanning, preserved in output
 - **Bottom-to-top replacement** — line numbers stay correct when multiple credentials are in one file
-- **Credential masking** — all output formats (text, JSON, SARIF) show only the first 4 characters of a credential. `full_value` never appears in logs, reports, or error messages
+- **Credential masking** — all output formats show only the first 4 characters. `full_value` never appears in logs, reports, or error messages
 - **Crash-safe temp files** — `.credactor.tmp` files are cleaned up in a `finally` block even if the process crashes
-- **Symlink boundary enforcement** — file symlinks resolving outside the scan root are skipped, preventing exfiltration of external file contents via scan output
-- **SARIF output sanitized** — finding metadata is HTML-escaped to prevent injection in downstream SARIF consumers
+- **Symlink boundary enforcement** — file symlinks resolving outside the scan root are skipped
+- **SARIF output sanitised** — finding metadata is HTML-escaped to prevent injection in downstream consumers
 
 ## Output Formats
 
@@ -307,7 +325,15 @@ credactor --staged --ci
 
 ### SARIF
 
-SARIF 2.1.0 output for GitHub Code Scanning, VS Code SARIF Viewer, or any compatible tool. Includes precise line and column ranges (`startLine`, `endLine`, `startColumn`, `endColumn`) for accurate code annotations, plus `ruleIndex`, `fullDescription`, and `help` fields for richer integration.
+SARIF 2.1.0 output for GitHub Code Scanning, VS Code SARIF Viewer, or any compatible tool. Includes precise line and column ranges for accurate code annotations.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | No findings, or all resolved |
+| `1` | Unresolved findings |
+| `2` | Error, or files skipped with `--fail-on-error` |
 
 ## Not Flagged
 
