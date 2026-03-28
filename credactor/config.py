@@ -4,6 +4,7 @@ Configuration loading from ``.credactor.toml`` files.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -91,7 +92,7 @@ def load_config_file(
         if candidate.is_file():
             # SEC-02 / SEC-29: Config trust boundary check
             if project_root and not str(candidate.resolve()).startswith(
-                str(project_root)
+                str(project_root) + os.sep
             ):
                 if ci_mode:
                     # SEC-29: Hard block in CI — never trust external config
