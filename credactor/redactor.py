@@ -148,11 +148,19 @@ def _create_backup(filepath: str, config: Config) -> str | None:
     # SEC-01: Move backup to secure directory if configured
     if config.secure_backup_dir:
         dest_dir = Path(config.secure_backup_dir).resolve()
-        # SEC-20: Refuse if secure-backup-dir is a symlink to untrusted location
+        # SEC-20: Refuse if secure-backup-dir is a symlink to untrusted location.
+        # Return None to signal failure — caller will skip redaction for this file.
         if os.path.islink(config.secure_backup_dir):
             print(f'  [ERROR] --secure-backup-dir is a symlink (possible attack): '
                   f'{config.secure_backup_dir}', file=sys.stderr)
-            return bak  # backup still at original location
+            print('  Refusing to proceed — backup security cannot be guaranteed.',
+                  file=sys.stderr)
+            # Clean up the in-repo backup we already created
+            try:
+                os.unlink(bak)
+            except OSError:
+                pass
+            return None
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
             dest = str(dest_dir / Path(bak).name)
