@@ -5,7 +5,7 @@
 - Python 3.10+
 - No required dependencies. Optional: `charset-normalizer` or `chardet` for non-UTF-8 files.
 
-## Install
+## Installation
 
 ### From PyPI
 
@@ -13,7 +13,7 @@
 pip install credactor
 ```
 
-### From source (local install)
+### From Source
 
 To install from source so `credactor` works globally from any directory:
 
@@ -23,7 +23,7 @@ cd Credactor
 pip install -e .
 ```
 
-If `pip` is managed by `uv` and you're outside a virtualenv, use `pip3` or add `--system`:
+If `pip` is managed by `uv` and you are outside a virtualenv, use `pip3` or add `--system`:
 
 ```bash
 pip3 install -e .
@@ -43,7 +43,7 @@ To uninstall:
 pip uninstall credactor
 ```
 
-### Run without installing
+### Run Without Installing
 
 If you just want to run it from the cloned repo without a global install:
 
@@ -51,11 +51,9 @@ If you just want to run it from the cloned repo without a global install:
 git clone https://github.com/rxb06/Credactor.git
 cd Credactor
 python -m credactor --help
-# or
-python credential_redactor.py --help
 ```
 
-### Optional deps
+### Optional Dependencies
 
 Better encoding detection for legacy codebases:
 
@@ -71,7 +69,9 @@ TOML config on Python < 3.11:
 pip install tomli
 ```
 
-## Config File
+## Configuration
+
+### Config File
 
 `.credactor.toml` in your project root (or any parent directory). The tool walks upward from the scan target to find it.
 
@@ -81,7 +81,7 @@ pip install tomli
 entropy_threshold = 3.5    # Shannon entropy floor
 min_value_length = 8       # Ignore shorter values
 
-# Extra dirs to skip (merged with defaults)
+# Extra directories to skip (merged with defaults)
 skip_dirs = [".terraform", "vendor"]
 skip_files = ["generated_config.py"]
 
@@ -97,12 +97,12 @@ replacement = "REDACTED_BY_CREDACTOR"
 Override path:
 
 ```bash
-python -m credactor --config /path/to/.credactor.toml .
+credactor --config /path/to/.credactor.toml .
 ```
 
-## Suppression
+### Suppression
 
-### Inline
+#### Inline
 
 ```python
 api_key = "test_key_for_unit_tests"  # credactor:ignore
@@ -112,7 +112,7 @@ api_key = "test_key_for_unit_tests"  # credactor:ignore
 const key = "test_key";  // credactor:ignore
 ```
 
-### Allowlist
+#### Allowlist
 
 `.credactorignore` in your project root:
 
@@ -128,74 +128,11 @@ config/defaults.py:42
 test_fixture_value_abc123
 ```
 
-## Pre-commit Hook
+## Pre-commit Hooks and CI/CD
 
-With the `pre-commit` framework:
+See the [Integration Guide](integration.md) for pre-commit hook setup (framework and standalone) and CI pipeline configuration (GitHub Actions, GitLab CI).
 
-```yaml
-# .pre-commit-config.yaml
-repos:
-  - repo: local
-    hooks:
-      - id: credactor
-        name: credactor
-        entry: python -m credactor --staged --ci
-        language: python
-        pass_filenames: false
-        always_run: true
-```
-
-Or manually in `.git/hooks/pre-commit`:
-
-```bash
-#!/bin/sh
-python -m credactor --staged --ci
-```
-
-`--ci` exits 1 on findings, blocking the commit. Exit 0 means clean.
-
-## CI/CD
-
-### GitHub Actions
-
-```yaml
-- name: Credential scan
-  run: python -m credactor --ci --fail-on-error --format sarif . > results.sarif
-
-- name: Upload SARIF
-  uses: github/codeql-action/upload-sarif@v4
-  with:
-    sarif_file: results.sarif
-```
-
-`--ci` is read-only by design — it blocks `--fix-all` and forces `--dry-run`. No file modifications are possible in CI mode. In CI, `.credactor.toml` files found outside the project root are refused (not just warned about) to prevent planted configs from weakening scanning.
-
-`--fail-on-error` ensures the pipeline also fails if any files could not be scanned (e.g. permission errors), rather than silently skipping them.
-
-Use `--verbose` in CI to log suppressed findings for audit trails.
-
-### GitLab CI
-
-```yaml
-credential-scan:
-  script:
-    - python -m credactor --ci --fail-on-error --format json . > credential-report.json
-  artifacts:
-    reports:
-      codequality: credential-report.json
-  allow_failure: false
-```
-
-### Generic
-
-```bash
-python -m credactor --ci .
-
-# Strict mode: also fail if files were skipped due to errors
-python -m credactor --ci --fail-on-error .
-```
-
-## Tests
+## Running Tests
 
 ```bash
 pip install pytest
@@ -208,7 +145,7 @@ python -m pytest tests/ -v
 credactor/
     __init__.py          # version
     __main__.py          # python -m entry point
-    cli.py               # arg parsing, main flow
+    cli.py               # argument parsing, main flow
     config.py            # .credactor.toml loading
     gitignore.py         # .gitignore matching
     patterns.py          # regexes, constants
@@ -230,6 +167,7 @@ tests/
     test_report.py
     test_safe_values.py
     test_scanner.py
+    test_security.py
     test_suppressions.py
     test_walker.py
 requirements-ci.in       # CI dependency source (human-readable)

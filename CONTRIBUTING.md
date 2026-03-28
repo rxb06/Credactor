@@ -25,20 +25,21 @@ python -m build
 python scripts/audit_wheel.py
 ```
 
-The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contains only files tracked in the git repo. This is a supply chain protection — see [SECURITY.md](SECURITY.md) for details.
+The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contains only files tracked in the git repo. See [docs/security.md](docs/security.md#supply-chain-hardening) for details.
 
 ## Code Style
 
 - Formatted with [Ruff](https://docs.astral.sh/ruff/)
 - Type hints on all public functions
-- No external runtime dependencies — stdlib only
+- No external runtime dependencies, stdlib only
 
 ## CI Pipeline
 
 Every PR runs:
-- **test** — pytest across Python 3.10–3.13
-- **self-scan** — Credactor scans its own codebase (SARIF uploaded to Code Scanning)
-- **build-audit** — builds the wheel and verifies contents match the repo
+
+- **test** - pytest across Python 3.10–3.13
+- **self-scan** - Credactor scans its own codebase (SARIF uploaded to Code Scanning)
+- **build-audit** - builds the wheel and verifies contents match the repo
 
 All CI dependencies are hash-pinned via `requirements-ci.txt` (`--require-hashes`). GitHub Actions are pinned to commit SHAs.
 

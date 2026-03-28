@@ -90,9 +90,13 @@ def load_config_file(
 
     for candidate in candidates:
         if candidate.is_file():
-            # SEC-02 / SEC-29: Config trust boundary check
-            if project_root and not str(candidate.resolve()).startswith(
-                str(project_root) + os.sep
+            # SEC-02 / SEC-29 / SEC-33: Config trust boundary check
+            # Normpath for cross-platform separator normalisation, then
+            # append os.sep AFTER normpath to prevent prefix collision.
+            _cand = os.path.normpath(str(candidate.resolve()))
+            _root = os.path.normpath(str(project_root))
+            if project_root and not (
+                _cand == _root or _cand.startswith(_root + os.sep)
             ):
                 if ci_mode:
                     # SEC-29: Hard block in CI — never trust external config

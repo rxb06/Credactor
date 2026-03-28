@@ -96,15 +96,20 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if cleaned in safe:
         return True
 
-    # Environment variable reference ($VAR, ${VAR}, ${{VAR}})
-    if cleaned.startswith('$'):
+    # Environment variable / template references.
+    # SEC-34: Require matching closing delimiters for brace syntax to prevent
+    # false negatives on values like "${AKIA1234567890123456" (unclosed).
+    # Bare $VAR and $VAR_NAME (no braces) are safe — they're env var names.
+    if cleaned.startswith('${{') and '}}' in cleaned:
         return True
-
-    # Template variable reference (${VAR}, {%...%} Jinja, {{...}} Helm/Ansible)
-    # CVE-03 fix: must have full template syntax, not bare curly braces
-    if cleaned.startswith('${') or cleaned.startswith('{%'):
+    if cleaned.startswith('${') and '}' in cleaned:
         return True
-    if cleaned.startswith('{{'):
+    if cleaned.startswith('$') and not cleaned.startswith('${'):
+        # Bare env var: $VAR or $VAR_NAME — no braces, always safe
+        return True
+    if cleaned.startswith('{%') and '%}' in cleaned:
+        return True
+    if cleaned.startswith('{{') and '}}' in cleaned:
         return True
 
     # 1Password CLI secret reference: op://vault/item/field

@@ -22,6 +22,21 @@ from .scanner import scan_file, should_scan_file
 from .suppressions import AllowList
 
 
+def _is_within_root(path_str: str, root_str: str) -> bool:
+    """SEC-33: Cross-platform path containment check.
+
+    On Windows, git returns forward-slash paths but Path.resolve() returns
+    backslash paths.  Normalise both sides so the startswith() boundary
+    check works regardless of separator style.
+
+    Appends os.sep AFTER normpath to prevent prefix collision
+    (e.g. /tmp/repo must not match /tmp/repo_evil).
+    """
+    norm_path = os.path.normpath(path_str)
+    norm_root = os.path.normpath(root_str)
+    return norm_path == norm_root or norm_path.startswith(norm_root + os.sep)
+
+
 def _progress_callback_factory(total: int, no_color: bool) -> Callable[[int], None]:
     """Return a callback that prints a progress line to stderr."""
     def _progress(done: int) -> None:
@@ -61,7 +76,7 @@ def walk_and_scan(
         dirnames[:] = [
             d for d in dirnames
             if d not in extra_skip_dirs
-            and str(Path(os.path.join(dirpath, d)).resolve()).startswith(root_str)
+            and _is_within_root(str(Path(os.path.join(dirpath, d)).resolve()), root_str)
         ]
         for filename in filenames:
             if filename in extra_skip_files:
@@ -73,7 +88,7 @@ def walk_and_scan(
             if os.path.islink(full_path):
                 try:
                     resolved_file = str(Path(full_path).resolve())
-                    if not resolved_file.startswith(root_str):
+                    if not _is_within_root(resolved_file, root_str):
                         continue
                 except OSError:
                     continue
@@ -203,7 +218,8 @@ def scan_staged_files(
             capture_output=True, text=True, cwd=str(root_path), timeout=30,
         )
         if result.returncode != 0:
-            print(f'[ERROR] git diff failed: {result.stderr.strip()}', file=sys.stderr)
+            print(f'[ERROR] git diff failed: {result.stderr.strip()}',
+                  file=sys.stderr)
             return [], []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
@@ -233,7 +249,8 @@ def scan_staged_files(
             resolved = str(Path(full_path).resolve())
         except OSError:
             continue
-        if not resolved.startswith(str(root_path) + os.sep):
+        # SEC-33: Normalise path separators for cross-platform containment
+        if not _is_within_root(resolved, str(root_path) + os.sep):
             continue
         if os.path.isfile(full_path) and should_scan_file(line, config.extra_extensions):
             staged.append(full_path)
@@ -263,7 +280,8 @@ def scan_git_history(
             capture_output=True, text=True, cwd=str(root_path), timeout=120,
         )
         if result.returncode != 0:
-            print(f'[ERROR] git log failed: {result.stderr.strip()}', file=sys.stderr)
+            print(f'[ERROR] git log failed: {result.stderr.strip()}',
+                  file=sys.stderr)
             return []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)

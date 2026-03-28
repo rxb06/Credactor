@@ -92,7 +92,7 @@ AWS_KEY = os.environ["AWS_KEY"]
 DB_PASSWORD = os.environ["DB_PASSWORD"]
 ```
 
-Language-aware — `.js` gets `process.env.AWS_KEY`, `.go` gets `os.Getenv("AWS_KEY")`, etc.
+Language-aware — `.js` gets `process.env["AWS_KEY"]`, `.go` gets `os.Getenv("AWS_KEY")`, etc.
 
 ## 5. Pre-commit hook
 
