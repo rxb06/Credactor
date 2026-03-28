@@ -6,7 +6,7 @@ Thanks for your interest in Credactor. Bug reports, feature requests, and pull r
 
 ```bash
 git clone https://github.com/rxb06/Credactor.git
-cd Credator
+cd Credactor
 pip install -e ".[dev]"
 ```
 
@@ -31,15 +31,15 @@ The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contain
 
 - Formatted with [Ruff](https://docs.astral.sh/ruff/)
 - Type hints on all public functions
-- No external runtime dependencies — stdlib only
+- No external runtime dependencies, stdlib only
 
 ## CI Pipeline
 
 Every PR runs:
 
-- **test** — pytest across Python 3.10–3.13
-- **self-scan** — Credactor scans its own codebase (SARIF uploaded to Code Scanning)
-- **build-audit** — builds the wheel and verifies contents match the repo
+- **test** - pytest across Python 3.10–3.13
+- **self-scan** - Credactor scans its own codebase (SARIF uploaded to Code Scanning)
+- **build-audit** - builds the wheel and verifies contents match the repo
 
 All CI dependencies are hash-pinned via `requirements-ci.txt` (`--require-hashes`). GitHub Actions are pinned to commit SHAs.
 
