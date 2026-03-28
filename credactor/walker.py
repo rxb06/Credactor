@@ -222,11 +222,16 @@ def scan_staged_files(
 
     staged = []
     for line in raw_staged:
-        # SEC-32: Reject paths with traversal sequences (consistent with SEC-25)
-        if '..' in line:
+        # SEC-32: Reject paths with '..' path components (traversal guard,
+        # consistent with SEC-25).  Uses component check, not substring,
+        # so filenames like 'secret..py' are not falsely skipped.
+        if any(part == '..' for part in Path(line).parts):
             continue
         full_path = str(root_path / line)
-        resolved = str(Path(full_path).resolve())
+        try:
+            resolved = str(Path(full_path).resolve())
+        except OSError:
+            continue
         if not resolved.startswith(str(root_path)):
             continue
         if os.path.isfile(full_path) and should_scan_file(line, config.extra_extensions):
@@ -276,8 +281,10 @@ def scan_git_history(
             continue
         if line.startswith('+++ b/'):
             current_file = line[6:]
-            # SEC-25: Reject paths with traversal sequences from git output
-            if '..' in current_file:
+            # SEC-25: Reject paths with '..' path components from git output.
+            # Uses component check, not substring, so filenames like
+            # 'secret..py' are not falsely skipped.
+            if any(part == '..' for part in Path(current_file).parts):
                 current_file = ''
             diff_lineno = 0
             continue
