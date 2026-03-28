@@ -55,7 +55,8 @@ def walk_and_scan(
     # Forward-only scanning: os.walk descends into children only.
     # Additionally filter out symlinks that escape the scan root to
     # prevent traversal into parent or unrelated directories.
-    root_str = str(root_path)
+    # Append separator so '/tmp/repo' won't prefix-match '/tmp/repo_evil'.
+    root_str = str(root_path) + os.sep
     for dirpath, dirnames, filenames in os.walk(root_path):
         dirnames[:] = [
             d for d in dirnames
@@ -232,7 +233,7 @@ def scan_staged_files(
             resolved = str(Path(full_path).resolve())
         except OSError:
             continue
-        if not resolved.startswith(str(root_path)):
+        if not resolved.startswith(str(root_path) + os.sep):
             continue
         if os.path.isfile(full_path) and should_scan_file(line, config.extra_extensions):
             staged.append(full_path)
