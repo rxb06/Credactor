@@ -55,7 +55,8 @@ def walk_and_scan(
     # Forward-only scanning: os.walk descends into children only.
     # Additionally filter out symlinks that escape the scan root to
     # prevent traversal into parent or unrelated directories.
-    root_str = str(root_path)
+    # Append separator so '/tmp/repo' won't prefix-match '/tmp/repo_evil'.
+    root_str = str(root_path) + os.sep
     for dirpath, dirnames, filenames in os.walk(root_path):
         dirnames[:] = [
             d for d in dirnames
@@ -207,9 +208,33 @@ def scan_staged_files(
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
         return [], []
+    raw_staged = result.stdout.strip().splitlines()
+
+    # SEC-31: Warn if suppression/config files are staged alongside code.
+    # A malicious contributor could add .credactor.toml with extra_safe_values
+    # or .credactorignore patterns to silently disable detection in the same PR.
+    _CONFIG_BASENAMES = {'.credactor.toml', '.credactorignore'}
+    staged_configs = [f for f in raw_staged if Path(f).name in _CONFIG_BASENAMES]
+    if staged_configs:
+        print('[WARN] Suppression/config files staged alongside code changes: '
+              f'{", ".join(staged_configs)}. '
+              'Review these for detection-bypass attempts.',
+              file=sys.stderr)
+
     staged = []
-    for line in result.stdout.strip().splitlines():
+    for line in raw_staged:
+        # SEC-32: Reject paths with '..' path components (traversal guard,
+        # consistent with SEC-25).  Uses component check, not substring,
+        # so filenames like 'secret..py' are not falsely skipped.
+        if any(part == '..' for part in Path(line).parts):
+            continue
         full_path = str(root_path / line)
+        try:
+            resolved = str(Path(full_path).resolve())
+        except OSError:
+            continue
+        if not resolved.startswith(str(root_path) + os.sep):
+            continue
         if os.path.isfile(full_path) and should_scan_file(line, config.extra_extensions):
             staged.append(full_path)
 
@@ -257,8 +282,10 @@ def scan_git_history(
             continue
         if line.startswith('+++ b/'):
             current_file = line[6:]
-            # SEC-25: Reject paths with traversal sequences from git output
-            if '..' in current_file:
+            # SEC-25: Reject paths with '..' path components from git output.
+            # Uses component check, not substring, so filenames like
+            # 'secret..py' are not falsely skipped.
+            if any(part == '..' for part in Path(current_file).parts):
                 current_file = ''
             diff_lineno = 0
             continue

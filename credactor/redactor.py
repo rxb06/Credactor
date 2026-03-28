@@ -45,6 +45,11 @@ def _make_replacement(
         # Derive env var name from the variable name in the finding
         var_name = _derive_env_var_name(finding)
         ext = Path(filepath).suffix.lower()
+        # SEC-30: Defence-in-depth — validate the sanitised var name (not the
+        # full replacement, which intentionally contains shell metacharacters
+        # like ${} for shell/YAML/config files).
+        if _UNSAFE_REPLACEMENT_RE.search(var_name):
+            return 'REDACTED_BY_CREDACTOR'
         return _env_ref_for_language(var_name, ext)
 
     if mode == 'custom':
@@ -63,12 +68,19 @@ def _derive_env_var_name(finding: dict) -> str:
         # Remove dotted prefixes (e.g. self.api_key -> api_key)
         if '.' in name:
             name = name.rsplit('.', 1)[1]
-        return name.upper().replace('-', '_')
+        raw = name.upper().replace('-', '_')
     # pattern:AWS access key -> AWS_ACCESS_KEY
-    if ftype.startswith('pattern:') or ftype.startswith('xml-attr:'):
+    elif ftype.startswith('pattern:') or ftype.startswith('xml-attr:'):
         label = ftype.split(':', 1)[1]
-        return label.upper().replace(' ', '_').replace('-', '_')
-    return 'CREDENTIAL'
+        raw = label.upper().replace(' ', '_').replace('-', '_')
+    else:
+        return 'CREDENTIAL'
+
+    # SEC-30: Strip non-identifier characters to prevent code injection via
+    # crafted xml-attr keys (e.g. "password]);evil()//").  Environment variable
+    # names must be alphanumeric + underscore only.
+    sanitized = re.sub(r'[^A-Za-z0-9_]', '', raw)
+    return sanitized if sanitized else 'CREDENTIAL'
 
 
 def _env_ref_for_language(var_name: str, ext: str) -> str:
@@ -76,7 +88,7 @@ def _env_ref_for_language(var_name: str, ext: str) -> str:
     if ext in ('.py',):
         return f'os.environ["{var_name}"]'
     if ext in ('.js', '.ts', '.jsx', '.tsx'):
-        return f'process.env.{var_name}'
+        return f'process.env["{var_name}"]'
     if ext in ('.rb',):
         return f"ENV['{var_name}']"
     if ext in ('.go',):
@@ -104,16 +116,24 @@ def _create_backup(filepath: str, config: Config) -> str | None:
     """
     bak = filepath + '.bak'
 
-    # SEC-09: Prevent symlink race — refuse to overwrite if .bak is a symlink
-    if os.path.islink(bak):
-        print(f'  [ERROR] Backup path is a symlink (possible attack): {bak}',
-              file=sys.stderr)
-        return None
-
+    # SEC-09: Atomic backup via mkstemp (O_CREAT|O_EXCL prevents symlink race).
+    # Previous approach used islink() + copy2() with a TOCTOU gap between
+    # the check and the write.
+    dir_name = os.path.dirname(filepath) or '.'
+    tmp_bak: str | None = None
     try:
-        shutil.copy2(filepath, bak)
+        fd, tmp_bak = tempfile.mkstemp(dir=dir_name, suffix='.credactor.bak')
+        os.close(fd)
+        shutil.copy2(filepath, tmp_bak)
+        os.replace(tmp_bak, bak)
+        tmp_bak = None  # rename succeeded
     except (OSError, PermissionError) as exc:
         print(f'  [WARN] Could not create backup {bak}: {exc}', file=sys.stderr)
+        if tmp_bak is not None:
+            try:
+                os.unlink(tmp_bak)
+            except OSError:
+                pass
         return None
 
     # SEC-28: Warn once about plaintext backups when not using secure options
@@ -189,14 +209,21 @@ def batch_replace_in_file(
 
     # SEC-15: Acquire advisory file lock to mitigate TOCTOU races between
     # read and replace. Uses fcntl on Unix; silently skipped on Windows.
+    # On Windows fcntl is unavailable, so the handle must be closed
+    # immediately — keeping it open would block os.replace() later.
     lock_fh = None
     try:
         lock_fh = open(filepath, 'r')  # noqa: SIM115
         try:
             import fcntl
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (ImportError, OSError):
-            pass  # Windows or file already locked — proceed without lock
+        except ImportError:
+            # Windows: fcntl unavailable — close handle to avoid blocking
+            # os.replace() which cannot overwrite an open file on Windows.
+            lock_fh.close()
+            lock_fh = None
+        except OSError:
+            pass  # Lock contention — proceed without lock
     except OSError:
         pass
 

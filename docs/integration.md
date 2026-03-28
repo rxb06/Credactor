@@ -21,7 +21,7 @@ If you use [pre-commit](https://pre-commit.com), add this to your `.pre-commit-c
 ```yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.3.0  # pin to a release tag
+    rev: v2.3.1  # pin to a release tag
     hooks:
       - id: credactor
 ```

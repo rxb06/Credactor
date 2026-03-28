@@ -243,7 +243,11 @@ def _main_inner(argv: list[str] | None = None) -> None:
     # fmt: on
     resolved = str(Path(target).resolve())
     # Block system directories
-    if resolved in _PROTECTED_DIRS:
+    # On Windows, also block any drive root (e.g. D:\, F:\) not just C:\
+    if (
+        resolved in _PROTECTED_DIRS
+        or (sys.platform == 'win32' and len(resolved) == 3 and resolved[1:] == ':\\')
+    ):
         print(f'Error: refusing to scan system directory: {resolved}',
               file=sys.stderr)
         print('  Credactor is designed to scan project directories only.',
