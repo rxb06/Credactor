@@ -56,7 +56,7 @@ credactor --ci .
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.3.2
+    rev: v2.3.3
     hooks:
       - id: credactor
 ```
