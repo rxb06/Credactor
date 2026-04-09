@@ -23,7 +23,7 @@ If you use [pre-commit](https://pre-commit.com), add this to `.pre-commit-config
 ```yaml
 repos:
   - repo: https://github.com/rxb06/Credactor
-    rev: v2.3.2  # pin to a release tag
+    rev: v2.3.3  # pin to a release tag
     hooks:
       - id: credactor
 ```

@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] - 2026-04-09
+
+### Fixed
+
+- **SEC-35:** SARIF output injection — HTML-escape finding type in all SARIF rule fields to prevent XSS via attacker-controlled XML attribute names.
+- **SEC-36:** Terminal escape injection — sanitise file paths, finding types, and raw source lines in text report output.
+- **SEC-37:** Bare `$` prefix detection bypass — validate POSIX env var name syntax after `$` to prevent credential suppression.
+- **SEC-38:** Config type confusion DoS — guard `float()`/`int()` conversions against malformed `.credactor.toml` values.
+- **SEC-39:** Config trust boundary (non-git) — fall back to scan root when no `.git` exists, preventing silent config loading from parent directories.
+
+### Added
+
+- TTP-based vulnerability chain analysis (`mydocs/vulnerability-chains.md`).
+- 21 new security tests covering SEC-35 through SEC-39.
+
 ## [2.3.2] - 2026-03-28
 
 ### Fixed
@@ -79,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git staged file and history scanning.
 - Pre-commit hook support (beta).
 
+[2.3.3]: https://github.com/rxb06/Credactor/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/rxb06/Credactor/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/rxb06/Credactor/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/rxb06/Credactor/compare/v2.2.2...v2.3.0

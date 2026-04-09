@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import __version__
-from .utils import mask_secret
+from .utils import mask_secret, sanitize_for_terminal
 
 # ---------------------------------------------------------------------------
 # ANSI color helpers (#31)
@@ -82,7 +82,10 @@ def print_report(
             rel = Path(filepath).relative_to(root_path)
         except ValueError:
             rel = Path(filepath)
-        print(_c(f'  FILE: {rel}', 'bold', use_color=color), file=stream)
+        # SEC-36: Sanitise file path for terminal output to prevent
+        # escape-sequence injection via crafted filenames.
+        safe_rel = sanitize_for_terminal(str(rel))
+        print(_c(f'  FILE: {safe_rel}', 'bold', use_color=color), file=stream)
         print(f'  {"─" * 60}', file=stream)
         for finding in file_findings:
             severity = finding.get('severity', 'medium')
@@ -91,9 +94,12 @@ def print_report(
             # #2/#29 — mask the credential in the raw line display
             masked_raw = _mask_in_line(finding['raw'], finding['full_value'])
 
+            # SEC-36: Sanitise type and raw line for terminal output.
+            safe_type = sanitize_for_terminal(finding['type'])
+            safe_raw = sanitize_for_terminal(masked_raw[:120])
             sev_label = _c(f'[{severity.upper()}]', sev_color, use_color=color)
-            print(f'  Line {finding["line"]:>4}  {sev_label}  [{finding["type"]}]', file=stream)
-            print(f'           {masked_raw[:120]}', file=stream)
+            print(f'  Line {finding["line"]:>4}  {sev_label}  [{safe_type}]', file=stream)
+            print(f'           {safe_raw}', file=stream)
         print(file=stream)
 
     print(f'{"=" * 70}', file=stream)
@@ -142,13 +148,17 @@ def sarif_report(findings: list[dict], root: str) -> str:
     results = []
 
     for f in findings:
-        rule_id = f['type'].replace(':', '-')
+        # SEC-35: Sanitise finding type for SARIF rule fields.  The type can
+        # contain attacker-controlled content (e.g. xml-attr keys), so escape
+        # HTML to prevent XSS in downstream SARIF viewers.
+        safe_type = html.escape(f['type'])
+        rule_id = safe_type.replace(':', '-')
         if rule_id not in rules:
             rules[rule_id] = {
                 'id': rule_id,
-                'shortDescription': {'text': f['type']},
+                'shortDescription': {'text': safe_type},
                 'fullDescription': {
-                    'text': f'Credactor detected a potential hardcoded credential ({f["type"]})',
+                    'text': f'Credactor detected a potential hardcoded credential ({safe_type})',
                 },
                 'help': {
                     'text': ('Remove the hardcoded credential and use an'
