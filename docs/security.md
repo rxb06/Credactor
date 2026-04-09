@@ -91,6 +91,16 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 - **SEC-34** — Template safe-value closing delimiter: Requires matching `}`, `%}`, or `}}`. Fixes `$`-prefix bypass.
 - **SEC-20** — Secure backup dir symlink (updated): Returns error and skips redaction instead of silent fallback.
 
+### TTP Chain Audit (SEC-35 through SEC-39)
+
+- **SEC-35** — SARIF output injection: HTML-escape finding type in all SARIF rule fields (`id`, `shortDescription`, `fullDescription`). Prevents XSS via attacker-controlled XML attribute names in downstream SARIF viewers.
+- **SEC-36** — Terminal escape injection: Apply `sanitize_for_terminal()` to file paths, finding types, and raw source lines in text report output. Prevents ANSI escape-sequence injection via crafted filenames or source content.
+- **SEC-37** — Bare `$` prefix bypass: Validate that text after `$` matches POSIX env var name syntax (`[A-Za-z_][A-Za-z0-9_]*`). Prevents suppressing credentials by prefixing with `$`.
+- **SEC-38** — Config type confusion: Wrap `float()`/`int()` conversions in `apply_config_file()` with try/except. Prevents scan crash (DoS) from malformed `.credactor.toml` values.
+- **SEC-39** — Config trust boundary (non-git): When no `.git` directory exists, fall back to comparing config location against the scan root. Prevents silent config loading from parent directories on non-git repos.
+
+See `mydocs/vulnerability-chains.md` for the full chain analysis including attack narratives, scope, and false positives investigated.
+
 ## Supply Chain Hardening
 
 - **Wheel integrity audit:** `scripts/audit_wheel.py` verifies wheel contents match the git repo.

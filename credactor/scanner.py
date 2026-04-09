@@ -105,8 +105,12 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if cleaned.startswith('${') and '}' in cleaned:
         return True
     if cleaned.startswith('$') and not cleaned.startswith('${'):
-        # Bare env var: $VAR or $VAR_NAME — no braces, always safe
-        return True
+        # SEC-37: Bare $VAR — validate that what follows $ is a plausible
+        # POSIX env var name ([A-Za-z_][A-Za-z0-9_]*).  Without this check,
+        # prefixing a credential with $ bypasses detection entirely.
+        env_name = cleaned[1:]
+        if env_name and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', env_name):
+            return True
     if cleaned.startswith('{%') and '%}' in cleaned:
         return True
     if cleaned.startswith('{{') and '}}' in cleaned:

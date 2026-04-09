@@ -94,10 +94,22 @@ def load_config_file(
             # Normpath for cross-platform separator normalisation, then
             # append os.sep AFTER normpath to prevent prefix collision.
             _cand = os.path.normpath(str(candidate.resolve()))
-            _root = os.path.normpath(str(project_root))
-            if project_root and not (
-                _cand == _root or _cand.startswith(_root + os.sep)
-            ):
+            _scan = os.path.normpath(str(Path(root).resolve()))
+
+            if project_root:
+                _root = os.path.normpath(str(project_root))
+                outside = not (
+                    _cand == _root or _cand.startswith(_root + os.sep)
+                )
+            else:
+                # SEC-39: No project root found (no .git). Fall back to
+                # checking against the scan root — warn if config is in
+                # a parent directory, since we cannot verify trust.
+                outside = not (
+                    _cand == _scan or _cand.startswith(_scan + os.sep)
+                )
+
+            if outside:
                 if ci_mode:
                     # SEC-29: Hard block in CI — never trust external config
                     print(
@@ -106,9 +118,10 @@ def load_config_file(
                         file=sys.stderr,
                     )
                     return {}
+                ref = project_root or root
                 print(
                     f'[WARN] Config loaded from outside project root: '
-                    f'{candidate} (project root: {project_root})',
+                    f'{candidate} (project root: {ref})',
                     file=sys.stderr,
                 )
             return _parse_toml(candidate)
@@ -173,7 +186,13 @@ def _basic_toml_parse(path: Path) -> dict:
 def apply_config_file(config: Config, file_data: dict) -> None:
     """Merge values from a parsed config file into the Config object."""
     if 'entropy_threshold' in file_data:
-        val = float(file_data['entropy_threshold'])
+        # SEC-38: Guard against type confusion (e.g. array where scalar expected).
+        try:
+            val = float(file_data['entropy_threshold'])
+        except (ValueError, TypeError):
+            print('[WARN] entropy_threshold has invalid type, using default 3.5',
+                  file=sys.stderr)
+            val = 3.5
         # SEC-12: Bound entropy threshold to valid Shannon entropy range
         if not 0.0 <= val <= 6.0:
             print(f'[WARN] entropy_threshold={val} out of valid range (0.0-6.0), '
@@ -181,7 +200,13 @@ def apply_config_file(config: Config, file_data: dict) -> None:
             val = 3.5
         config.entropy_threshold = val
     if 'min_value_length' in file_data:
-        val_i = int(file_data['min_value_length'])
+        # SEC-38: Guard against type confusion.
+        try:
+            val_i = int(file_data['min_value_length'])
+        except (ValueError, TypeError):
+            print('[WARN] min_value_length has invalid type, using default 8',
+                  file=sys.stderr)
+            val_i = 8
         # SEC-12: Bound min_value_length to reasonable range
         if not 1 <= val_i <= 200:
             print(f'[WARN] min_value_length={val_i} out of valid range (1-200), '
