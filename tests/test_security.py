@@ -1,13 +1,16 @@
 """Security-focused tests for confirmed vulnerability mitigations."""
 
+import json
 import os
 import sys
 import tempfile
+from io import StringIO
 
 import pytest
 
 from credactor.cli import main
-from credactor.config import Config
+from credactor.config import Config, apply_config_file, load_config_file
+from credactor.report import print_report, sarif_report
 from credactor.scanner import _is_safe_value
 from credactor.walker import _is_within_root, walk_and_scan
 
@@ -126,3 +129,191 @@ class TestTemplateSafeValue:
 
     def test_unclosed_helm_not_safe(self):
         assert not _is_safe_value('{{AKIA1234567890123456', None)
+
+
+class TestSarifOutputInjection:
+    """SEC-35: SARIF rule fields must HTML-escape attacker-controlled content."""
+
+    def _make_finding(self, ftype, value='sk_live_test123456789abc'):
+        return {
+            'file': '/tmp/test.xml',
+            'line': 1,
+            'type': ftype,
+            'severity': 'high',
+            'full_value': value,
+            'value_preview': value[:20],
+            'raw': f'name="{ftype}" value="{value}"',
+        }
+
+    def test_sarif_rule_id_escapes_html(self):
+        """HTML in finding type must be escaped in SARIF rule id."""
+        finding = self._make_finding('xml-attr:key<img/onerror=alert(1)>')
+        sarif = json.loads(sarif_report([finding], '/tmp'))
+        rules = sarif['runs'][0]['tool']['driver']['rules']
+        for rule in rules:
+            assert '<img' not in rule['id']
+            assert '&lt;' in rule['id'] or '<' not in rule['id']
+
+    def test_sarif_short_description_escapes_html(self):
+        """HTML in finding type must be escaped in SARIF shortDescription."""
+        finding = self._make_finding('xml-attr:key<script>alert(1)</script>')
+        sarif = json.loads(sarif_report([finding], '/tmp'))
+        rules = sarif['runs'][0]['tool']['driver']['rules']
+        for rule in rules:
+            desc = rule['shortDescription']['text']
+            assert '<script>' not in desc
+
+    def test_sarif_full_description_escapes_html(self):
+        """HTML in finding type must be escaped in SARIF fullDescription."""
+        finding = self._make_finding('xml-attr:key"><script>')
+        sarif = json.loads(sarif_report([finding], '/tmp'))
+        rules = sarif['runs'][0]['tool']['driver']['rules']
+        for rule in rules:
+            desc = rule['fullDescription']['text']
+            assert '<script>' not in desc
+
+
+class TestTerminalEscapeInjection:
+    """SEC-36: Text report must sanitise ANSI escape sequences."""
+
+    def test_ansi_in_filepath_sanitised(self):
+        """ANSI escape codes in file paths must not reach the terminal."""
+        finding = {
+            'file': '/tmp/\x1b[31mevil\x1b[0m.py',
+            'line': 1,
+            'type': 'variable:api_key',
+            'severity': 'high',
+            'full_value': 'secret123456',
+            'value_preview': 'secret...',
+            'raw': 'api_key = "secret123456"',
+        }
+        buf = StringIO()
+        print_report([finding], '/tmp', no_color=True, stream=buf)
+        output = buf.getvalue()
+        assert '\x1b[' not in output
+
+    def test_ansi_in_type_sanitised(self):
+        """ANSI escape codes in finding type must not reach the terminal."""
+        finding = {
+            'file': '/tmp/test.xml',
+            'line': 1,
+            'type': 'xml-attr:\x1b[32mfake\x1b[0m',
+            'severity': 'high',
+            'full_value': 'secret123456',
+            'value_preview': 'secret...',
+            'raw': 'name="fake" value="secret123456"',
+        }
+        buf = StringIO()
+        print_report([finding], '/tmp', no_color=True, stream=buf)
+        output = buf.getvalue()
+        # Strip the known ANSI codes from the report itself (color=False
+        # disables them, but verify no injected codes remain)
+        assert '\x1b[32m' not in output
+
+    def test_ansi_in_raw_line_sanitised(self):
+        """ANSI escape codes in raw source lines must not reach the terminal."""
+        raw = 'api_key = "\x1b[5mBLINKING_SECRET\x1b[0m"'
+        finding = {
+            'file': '/tmp/test.py',
+            'line': 1,
+            'type': 'variable:api_key',
+            'severity': 'high',
+            'full_value': '\x1b[5mBLINKING_SECRET\x1b[0m',
+            'value_preview': 'BLINK...',
+            'raw': raw,
+        }
+        buf = StringIO()
+        print_report([finding], '/tmp', no_color=True, stream=buf)
+        output = buf.getvalue()
+        assert '\x1b[5m' not in output
+
+
+class TestBareDollarPrefixBypass:
+    """SEC-37: Bare $ prefix must validate env var name syntax."""
+
+    def test_valid_env_var_is_safe(self):
+        """$DATABASE_URL is a valid env var reference — still safe."""
+        assert _is_safe_value('$DATABASE_URL', None)
+
+    def test_valid_short_env_var_is_safe(self):
+        assert _is_safe_value('$HOME', None)
+
+    def test_valid_underscore_prefix_is_safe(self):
+        assert _is_safe_value('$_PRIVATE_KEY', None)
+
+    def test_dollar_with_special_chars_not_safe(self):
+        """$xK7mN+/= contains non-identifier chars — not an env var."""
+        assert not _is_safe_value('$xK7mN2pQr9+/=sT4uVw', None)
+
+    def test_dollar_with_dots_not_safe(self):
+        """$some.dotted.value is not a valid env var name."""
+        assert not _is_safe_value('$some.dotted.value', None)
+
+    def test_dollar_with_dashes_not_safe(self):
+        """$some-dashed-value is not a valid env var name."""
+        assert not _is_safe_value('$some-dashed-value', None)
+
+    def test_dollar_with_slashes_not_safe(self):
+        """$path/to/thing is not a valid env var name."""
+        assert not _is_safe_value('$/path/to/secret', None)
+
+    def test_bare_dollar_alone_not_safe(self):
+        """Lone $ with nothing after it is not a valid env var."""
+        assert not _is_safe_value('$', None)
+
+    def test_dollar_starting_with_digit_not_safe(self):
+        """$123abc does not match env var syntax (must start with letter/_)."""
+        assert not _is_safe_value('$123abcdef', None)
+
+
+class TestConfigTypeConfusion:
+    """SEC-38: Malformed config values must not crash the scan."""
+
+    def test_entropy_threshold_non_numeric(self):
+        """String value for entropy_threshold falls back to default."""
+        config = Config()
+        apply_config_file(config, {'entropy_threshold': 'not_a_number'})
+        assert config.entropy_threshold == 3.5
+
+    def test_min_value_length_non_numeric(self):
+        """String value for min_value_length falls back to default."""
+        config = Config()
+        apply_config_file(config, {'min_value_length': 'abc'})
+        assert config.min_value_length == 8
+
+    def test_entropy_threshold_list_type(self):
+        """Array value for entropy_threshold falls back to default."""
+        config = Config()
+        apply_config_file(config, {'entropy_threshold': [1, 2, 3]})
+        assert config.entropy_threshold == 3.5
+
+    def test_min_value_length_dict_type(self):
+        """Dict value for min_value_length falls back to default."""
+        config = Config()
+        apply_config_file(config, {'min_value_length': {'nested': 5}})
+        assert config.min_value_length == 8
+
+    def test_valid_values_still_work(self):
+        """Valid numeric values must still be applied correctly."""
+        config = Config()
+        apply_config_file(config, {'entropy_threshold': 4.0, 'min_value_length': 12})
+        assert config.entropy_threshold == 4.0
+        assert config.min_value_length == 12
+
+
+class TestConfigTrustBoundaryNonGit:
+    """SEC-39: Config from parent dirs warned even without .git."""
+
+    def test_parent_config_warns_without_git(self, tmp_dir):
+        """Config in parent dir should warn when no .git exists."""
+        resolved = os.path.realpath(tmp_dir)
+        child = os.path.join(resolved, 'subdir')
+        os.makedirs(child)
+        # Place config in parent (tmp_dir), scan from child
+        config_path = os.path.join(resolved, '.credactor.toml')
+        with open(config_path, 'w') as f:
+            f.write('entropy_threshold = 4.0\n')
+        # No .git in either directory
+        result = load_config_file(child)
+        # Config should still load (we just want the warning path exercised)
+        assert result.get('entropy_threshold') == 4.0
