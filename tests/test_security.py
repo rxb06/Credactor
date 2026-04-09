@@ -241,21 +241,25 @@ class TestBareDollarPrefixBypass:
     def test_valid_underscore_prefix_is_safe(self):
         assert _is_safe_value('$_PRIVATE_KEY', None)
 
-    def test_dollar_with_special_chars_not_safe(self):
-        """$xK7mN+/= contains non-identifier chars — not an env var."""
-        assert not _is_safe_value('$xK7mN2pQr9+/=sT4uVw', None)
+    def test_dollar_env_var_with_suffix_is_safe(self):
+        """$HOME/.aws/credentials is a dynamic reference — safe."""
+        assert _is_safe_value('$HOME/.aws/credentials', None)
 
-    def test_dollar_with_dots_not_safe(self):
-        """$some.dotted.value is not a valid env var name."""
-        assert not _is_safe_value('$some.dotted.value', None)
+    def test_dollar_env_var_with_colon_suffix_is_safe(self):
+        """$TOKEN:prefix is a dynamic reference — safe."""
+        assert _is_safe_value('$TOKEN:prefix', None)
 
-    def test_dollar_with_dashes_not_safe(self):
-        """$some-dashed-value is not a valid env var name."""
-        assert not _is_safe_value('$some-dashed-value', None)
+    def test_dollar_env_var_with_dash_suffix_is_safe(self):
+        """$VAR-suffix is a dynamic reference — safe."""
+        assert _is_safe_value('$VAR-suffix', None)
 
-    def test_dollar_with_slashes_not_safe(self):
-        """$path/to/thing is not a valid env var name."""
+    def test_dollar_slash_not_safe(self):
+        """$/path/to/thing does not start with an identifier — not safe."""
         assert not _is_safe_value('$/path/to/secret', None)
+
+    def test_dollar_plus_not_safe(self):
+        """$+something does not start with an identifier — not safe."""
+        assert not _is_safe_value('$+something', None)
 
     def test_bare_dollar_alone_not_safe(self):
         """Lone $ with nothing after it is not a valid env var."""

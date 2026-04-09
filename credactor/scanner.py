@@ -105,11 +105,14 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if cleaned.startswith('${') and '}' in cleaned:
         return True
     if cleaned.startswith('$') and not cleaned.startswith('${'):
-        # SEC-37: Bare $VAR — validate that what follows $ is a plausible
-        # POSIX env var name ([A-Za-z_][A-Za-z0-9_]*).  Without this check,
-        # prefixing a credential with $ bypasses detection entirely.
+        # SEC-37: Bare $VAR — validate that the text after $ begins with a
+        # plausible POSIX env var name ([A-Za-z_][A-Za-z0-9_]*).  Uses
+        # re.match (prefix) rather than fullmatch so that dynamic references
+        # with suffixes ($HOME/.aws/credentials, $TOKEN:prefix, $VAR-suffix)
+        # remain safe while pure non-identifier strings ($+foo, $/path,
+        # $123abc) are correctly rejected.
         env_name = cleaned[1:]
-        if env_name and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', env_name):
+        if env_name and re.match(r'[A-Za-z_][A-Za-z0-9_]*', env_name):
             return True
     if cleaned.startswith('{%') and '%}' in cleaned:
         return True
