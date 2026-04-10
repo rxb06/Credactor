@@ -115,7 +115,19 @@ def ingest_gitleaks(
     SEC-40c: validates resolved paths are within the target directory.
     """
     verbose = config.verbose if config else False
-    target_resolved = str(Path(target).resolve())
+    target_path = Path(target).resolve()
+    if target_path.is_file():
+        # Defensive guard: callers should pass the repo root directory, not a
+        # file. Using the file's parent prevents broken path joins like
+        # <file>/src/config.py, but a warning is emitted so the caller knows.
+        if verbose:
+            print(
+                f'[WARN] ingest_gitleaks: target {str(target_path)!r} is a file; '
+                f'using its parent directory for path resolution.',
+                file=sys.stderr,
+            )
+        target_path = target_path.parent
+    target_resolved = str(target_path)
 
     # Load JSON
     try:
@@ -196,7 +208,7 @@ def ingest_gitleaks(
 
         # --- raw context line ---
         match_ctx = obj.get('Match', '')
-        if match_ctx:
+        if isinstance(match_ctx, str) and match_ctx:
             raw = match_ctx
         else:
             raw = _synthesise_raw(resolved, line)

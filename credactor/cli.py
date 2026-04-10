@@ -344,6 +344,14 @@ def _main_inner(argv: list[str] | None = None) -> None:
             print(f'[ERROR] Gitleaks file not found: {config.from_gitleaks}',
                   file=sys.stderr)
             sys.exit(2)
+        if os.path.isfile(target):
+            print(
+                '[ERROR] --from-gitleaks requires a directory target, not a file. '
+                'Pass the repository root directory so that file paths in the '
+                'Gitleaks report can be resolved correctly.',
+                file=sys.stderr,
+            )
+            sys.exit(2)
         from .ingest import ingest_gitleaks
         try:
             gitleaks_findings = ingest_gitleaks(config.from_gitleaks, target, config=config)

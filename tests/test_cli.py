@@ -162,6 +162,23 @@ class TestMainExitCodes:
         assert exc_info.value.code == 0
 
 
+class TestGitleaksFileTargetRejection:
+    """--from-gitleaks with a file target must be rejected with exit code 2."""
+
+    def test_file_target_exits_2(self, tmp_dir):
+        repo = os.path.join(tmp_dir, 'repo')
+        os.makedirs(repo)
+        src_file = os.path.join(repo, 'config.py')
+        with open(src_file, 'w') as f:
+            f.write('x = 1\n')
+        report = os.path.join(tmp_dir, 'report.json')
+        with open(report, 'w') as f:
+            json.dump([], f)
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--from-gitleaks', report, src_file])
+        assert exc_info.value.code == 2
+
+
 class TestGitleaksAllowlistIntegration:
     """Allowlist suppression must apply to --from-gitleaks findings."""
 

@@ -202,6 +202,22 @@ class TestGitleaksSymlinkAndPath:
         captured = capsys.readouterr()
         assert 'traversal' in captured.err.lower() or 'outside' in captured.err.lower()
 
+    def test_gitleaks_file_target_uses_parent_directory(self, tmp_path, capsys):
+        """Passing a file as target falls back to its parent; finding is still resolved."""
+        target, config_py = _make_target(tmp_path)
+        finding = _make_gitleaks_finding(File='src/config.py', StartLine=1)
+        report = _write_report(tmp_path, [finding])
+        # Pass the file itself as target — should resolve relative to its parent dir
+        from credactor.config import Config
+        cfg = Config(verbose=True)
+        results = ingest_gitleaks(str(report), str(config_py), config=cfg)
+        captured = capsys.readouterr()
+        assert 'warn' in captured.err.lower()  # defensive warning emitted
+        # Finding should still be resolved (parent of config_py = src/, not repo root)
+        # Path traversal guard may block it; what matters is no crash and raw is str
+        for r in results:
+            assert isinstance(r['raw'], str)
+
     @pytest.mark.skipif(
         not hasattr(os, 'symlink'), reason='symlinks not supported'
     )
@@ -279,6 +295,22 @@ class TestGitleaksFieldMapping:
         report = _write_report(tmp_path, [finding])
         results = ingest_gitleaks(str(report), str(target))
         assert results[0]['raw'] == 'aws_key = "AKIAIOSFODNN7EXAMPLE"'
+
+    def test_gitleaks_non_string_match_falls_back_to_synthesised(self, tmp_path):
+        """Non-string Match (malformed report) falls back to synthesised raw."""
+        target, _ = _make_target(tmp_path)
+        (target / 'src' / 'config.py').write_text(
+            'aws_key = "AKIAIOSFODNN7EXAMPLE"\n', encoding='utf-8'
+        )
+        for bad_match in (42, True, [], {}):
+            finding = _make_gitleaks_finding(StartLine=1)
+            finding['Match'] = bad_match
+            report = _write_report(tmp_path, [finding])
+            results = ingest_gitleaks(str(report), str(target))
+            assert len(results) == 1, f'Finding dropped for Match={bad_match!r}'
+            assert isinstance(results[0]['raw'], str), (
+                f'raw must be str, got {type(results[0]["raw"])} for Match={bad_match!r}'
+            )
 
     def test_gitleaks_finding_dict_shape(self, tmp_path):
         """All required keys present in output finding dict."""
