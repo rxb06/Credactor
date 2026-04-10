@@ -154,6 +154,22 @@ class TestDeriveEnvVarName:
         result = _derive_env_var_name({'type': 'xml-attr:]);()'})
         assert result == 'CREDENTIAL'
 
+    def test_derive_env_var_external_gitleaks(self):
+        """external:gitleaks:aws-access-token -> AWS_ACCESS_TOKEN"""
+        result = _derive_env_var_name({'type': 'external:gitleaks:aws-access-token'})
+        assert result == 'AWS_ACCESS_TOKEN'
+
+    def test_derive_env_var_external_trufflehog(self):
+        """external:trufflehog:AWS -> AWS"""
+        assert _derive_env_var_name({'type': 'external:trufflehog:AWS'}) == 'AWS'
+
+    def test_derive_env_var_external_sanitised(self):
+        """Non-identifier chars stripped from external label."""
+        result = _derive_env_var_name({'type': 'external:gitleaks:foo.bar@baz'})
+        assert result.isidentifier()
+        assert '.' not in result
+        assert '@' not in result
+
 
 class TestEnvRefForLanguage:
     """SEC-30: Verify bracket notation for JS and quoting for other languages."""

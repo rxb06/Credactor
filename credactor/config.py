@@ -43,6 +43,7 @@ class Config:
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'
     target: str = '.'
     config_path: Optional[str] = None
+    from_gitleaks: Optional[str] = None
 
 
 def _find_project_root(start: Path) -> Path | None:
