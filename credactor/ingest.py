@@ -122,22 +122,20 @@ def ingest_gitleaks(
         with open(filepath, encoding='utf-8', errors='replace') as fh:
             data = json.load(fh)
     except (OSError, PermissionError) as exc:
-        print(f'[ERROR] Cannot open Gitleaks file {filepath!r}: {exc}',
-              file=sys.stderr)
-        return []
+        raise ValueError(
+            f'Cannot open Gitleaks file {filepath!r}: {exc}'
+        ) from exc
     except json.JSONDecodeError as exc:
-        print(f'[ERROR] Gitleaks file is not valid JSON ({filepath!r}): {exc}',
-              file=sys.stderr)
-        return []
+        raise ValueError(
+            f'Gitleaks file is not valid JSON ({filepath!r}): {exc}'
+        ) from exc
 
     # SEC-40a: top-level must be a list
     if not isinstance(data, list):
-        print(
-            f'[ERROR] Gitleaks report must be a JSON array at top level '
-            f'(got {type(data).__name__}). File: {filepath!r}',
-            file=sys.stderr,
+        raise ValueError(
+            f'Gitleaks report must be a JSON array at top level '
+            f'(got {type(data).__name__}). File: {filepath!r}'
         )
-        return []
 
     # SEC-40b: cap at 10,000
     if len(data) > _MAX_FINDINGS:
@@ -159,7 +157,7 @@ def ingest_gitleaks(
 
         # --- Secret ---
         secret = obj.get('Secret', '')
-        if not secret:
+        if not isinstance(secret, str) or not secret:
             if verbose:
                 print('[WARN] Skipping Gitleaks finding with empty Secret.',
                       file=sys.stderr)

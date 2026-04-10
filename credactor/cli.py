@@ -345,7 +345,11 @@ def _main_inner(argv: list[str] | None = None) -> None:
                   file=sys.stderr)
             sys.exit(2)
         from .ingest import ingest_gitleaks
-        findings.extend(ingest_gitleaks(config.from_gitleaks, target, config=config))
+        try:
+            findings.extend(ingest_gitleaks(config.from_gitleaks, target, config=config))
+        except ValueError as exc:
+            print(f'[ERROR] {exc}', file=sys.stderr)
+            sys.exit(2)
 
     # Report errored files and fail if --fail-on-error
     if errored_files:

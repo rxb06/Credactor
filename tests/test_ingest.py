@@ -8,6 +8,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from credactor.ingest import _gitleaks_severity, _synthesise_raw, ingest_gitleaks
 
 # ---------------------------------------------------------------------------
@@ -105,16 +107,13 @@ class TestGitleaksBasicFinding:
 
 
 class TestGitleaksInputValidation:
-    def test_gitleaks_not_array(self, tmp_path, capsys):
-        """Top-level dict prints error and returns []."""
+    def test_gitleaks_not_array(self, tmp_path):
+        """Top-level dict raises ValueError."""
         target, _ = _make_target(tmp_path)
         report = tmp_path / 'report.json'
         report.write_text('{"Secret": "foo"}', encoding='utf-8')
-        results = ingest_gitleaks(str(report), str(target))
-        assert results == []
-        captured = capsys.readouterr()
-        assert '[ERROR]' in captured.err
-        assert 'array' in captured.err.lower()
+        with pytest.raises(ValueError, match='array'):
+            ingest_gitleaks(str(report), str(target))
 
     def test_gitleaks_missing_secret(self, tmp_path):
         """Finding without Secret key is skipped."""
@@ -132,6 +131,16 @@ class TestGitleaksInputValidation:
         results = ingest_gitleaks(str(report), str(target))
         assert results == []
 
+    def test_gitleaks_non_string_secret_skipped(self, tmp_path):
+        """Finding with a non-string Secret (e.g. int) is skipped, not crashed."""
+        target, _ = _make_target(tmp_path)
+        for bad_value in (12345, True, [], {}):
+            finding = _make_gitleaks_finding()
+            finding['Secret'] = bad_value
+            report = _write_report(tmp_path, [finding])
+            results = ingest_gitleaks(str(report), str(target))
+            assert results == [], f'Expected skip for Secret={bad_value!r}'
+
     def test_gitleaks_missing_file(self, tmp_path):
         """Finding without File key is skipped."""
         target, _ = _make_target(tmp_path)
@@ -148,15 +157,13 @@ class TestGitleaksInputValidation:
         results = ingest_gitleaks(str(report), str(target))
         assert results == []
 
-    def test_gitleaks_invalid_json(self, tmp_path, capsys):
-        """Non-JSON file returns [] with error message."""
+    def test_gitleaks_invalid_json(self, tmp_path):
+        """Non-JSON file raises ValueError."""
         target, _ = _make_target(tmp_path)
         report = tmp_path / 'bad.json'
         report.write_text('not json at all', encoding='utf-8')
-        results = ingest_gitleaks(str(report), str(target))
-        assert results == []
-        captured = capsys.readouterr()
-        assert '[ERROR]' in captured.err
+        with pytest.raises(ValueError, match='not valid JSON'):
+            ingest_gitleaks(str(report), str(target))
 
 
 class TestGitleaksSymlinkAndPath:
