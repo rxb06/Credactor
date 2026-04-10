@@ -150,6 +150,15 @@ def build_parser() -> argparse.ArgumentParser:
              'findings, skipped files, and safe-value decisions',
     )
 
+    # External tool ingestion
+    ingest = parser.add_argument_group('external tool ingestion (BETA)')
+    ingest.add_argument(
+        '--from-gitleaks', type=str, default=None, metavar='FILE',
+        help='[BETA] ingest findings from a Gitleaks JSON report file; '
+             'file paths in the report are resolved relative to the '
+             'target directory',
+    )
+
     return parser
 
 
@@ -184,7 +193,15 @@ def _main_inner(argv: list[str] | None = None) -> None:
         output_format=args.output_format,
         target=args.target,
         config_path=args.config,
+        from_gitleaks=args.from_gitleaks,
     )
+
+    # SEC-40: --scan-history conflicts with external ingestion
+    if config.scan_history and config.from_gitleaks:
+        print('[ERROR] --scan-history cannot be combined with --from-gitleaks. '
+              'External findings reference on-disc files; '
+              'history scan references committed content.', file=sys.stderr)
+        sys.exit(2)
 
     # SEC-26: --ci implies read-only — block file modifications in CI mode
     if config.ci_mode:
@@ -320,6 +337,32 @@ def _main_inner(argv: list[str] | None = None) -> None:
 
             for path in json_paths:
                 findings.extend(scan_file(path, config=config, allowlist=allowlist))
+
+    # --- Ingest external findings ---
+    if config.from_gitleaks:
+        if not os.path.isfile(config.from_gitleaks):
+            print(f'[ERROR] Gitleaks file not found: {config.from_gitleaks}',
+                  file=sys.stderr)
+            sys.exit(2)
+        if os.path.isfile(target):
+            print(
+                '[ERROR] --from-gitleaks requires a directory target, not a file. '
+                'Pass the repository root directory so that file paths in the '
+                'Gitleaks report can be resolved correctly.',
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        from .ingest import ingest_gitleaks
+        try:
+            gitleaks_findings = ingest_gitleaks(config.from_gitleaks, target, config=config)
+            gitleaks_findings = [
+                f for f in gitleaks_findings
+                if not allowlist.is_suppressed(f['file'], f['line'], f['full_value'])
+            ]
+            findings.extend(gitleaks_findings)
+        except ValueError as exc:
+            print(f'[ERROR] {exc}', file=sys.stderr)
+            sys.exit(2)
 
     # Report errored files and fail if --fail-on-error
     if errored_files:

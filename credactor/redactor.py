@@ -73,6 +73,10 @@ def _derive_env_var_name(finding: dict) -> str:
     elif ftype.startswith('pattern:') or ftype.startswith('xml-attr:'):
         label = ftype.split(':', 1)[1]
         raw = label.upper().replace(' ', '_').replace('-', '_')
+    # external:gitleaks:aws-access-token -> AWS_ACCESS_TOKEN
+    elif ftype.startswith('external:'):
+        label = ftype.rsplit(':', 1)[1]
+        raw = label.upper().replace(' ', '_').replace('-', '_')
     else:
         return 'CREDENTIAL'
 
