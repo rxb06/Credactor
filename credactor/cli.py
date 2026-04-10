@@ -346,7 +346,12 @@ def _main_inner(argv: list[str] | None = None) -> None:
             sys.exit(2)
         from .ingest import ingest_gitleaks
         try:
-            findings.extend(ingest_gitleaks(config.from_gitleaks, target, config=config))
+            gitleaks_findings = ingest_gitleaks(config.from_gitleaks, target, config=config)
+            gitleaks_findings = [
+                f for f in gitleaks_findings
+                if not allowlist.is_suppressed(f['file'], f['line'], f['full_value'])
+            ]
+            findings.extend(gitleaks_findings)
         except ValueError as exc:
             print(f'[ERROR] {exc}', file=sys.stderr)
             sys.exit(2)

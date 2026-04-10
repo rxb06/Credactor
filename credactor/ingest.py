@@ -172,10 +172,11 @@ def ingest_gitleaks(
                       file=sys.stderr)
             continue
 
-        # Resolve path relative to target
-        resolved = os.path.normpath(os.path.join(target_resolved, raw_file))
+        # Resolve path relative to target; resolve symlinks so SEC-40c
+        # containment check cannot be bypassed via a symlink pointing outside.
+        resolved = str(Path(os.path.normpath(os.path.join(target_resolved, raw_file))).resolve())
 
-        # SEC-40c: path traversal check
+        # SEC-40c: path traversal check (also catches symlinks outside root)
         if not _is_within_root(resolved, target_resolved):
             print(
                 f'[WARN] Skipping Gitleaks finding: path {raw_file!r} resolves '

@@ -1,5 +1,6 @@
 """Tests for CLI argument parsing and main entry point."""
 
+import json
 import os
 
 import pytest
@@ -159,3 +160,70 @@ class TestMainExitCodes:
         with pytest.raises(SystemExit) as exc_info:
             main(['--format', 'sarif', tmp_dir])
         assert exc_info.value.code == 0
+
+
+class TestGitleaksAllowlistIntegration:
+    """Allowlist suppression must apply to --from-gitleaks findings."""
+
+    def _make_repo(self, tmp_dir: str) -> tuple[str, str]:
+        """Create a minimal repo dir with one source file; return (repo, src_file)."""
+        repo = os.path.join(tmp_dir, 'repo')
+        src = os.path.join(repo, 'src')
+        os.makedirs(src)
+        src_file = os.path.join(src, 'config.py')
+        with open(src_file, 'w') as f:
+            f.write('aws_key = "AKIAIOSFODNN7EXAMPLE"\n')
+        return repo, src_file
+
+    def _write_report(self, tmp_dir: str, findings: list) -> str:
+        path = os.path.join(tmp_dir, 'report.json')
+        with open(path, 'w') as f:
+            json.dump(findings, f)
+        return path
+
+    def test_gitleaks_suppressed_value_not_reported(self, tmp_dir):
+        """A value suppressed in .credactorignore must not surface as a finding."""
+        repo, src_file = self._make_repo(tmp_dir)
+        secret = 'AKIAIOSFODNN7EXAMPLE'
+
+        # Suppress by value literal
+        with open(os.path.join(repo, '.credactorignore'), 'w') as f:
+            f.write(f'{secret}\n')
+
+        finding = {
+            'File': 'src/config.py',
+            'StartLine': 1,
+            'Secret': secret,
+            'Match': f'aws_key = "{secret}"',
+            'RuleID': 'aws-access-token',
+            'Tags': [],
+            'Commit': '',
+            'SymlinkFile': '',
+        }
+        report = self._write_report(tmp_dir, [finding])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--dry-run', '--from-gitleaks', report, repo])
+        # No unsuppressed findings → exit 0
+        assert exc_info.value.code == 0
+
+    def test_gitleaks_unsuppressed_value_is_reported(self, tmp_dir):
+        """Without a suppression entry the finding should be reported (exit 1)."""
+        repo, src_file = self._make_repo(tmp_dir)
+        secret = 'AKIAIOSFODNN7EXAMPLE'
+
+        finding = {
+            'File': 'src/config.py',
+            'StartLine': 1,
+            'Secret': secret,
+            'Match': f'aws_key = "{secret}"',
+            'RuleID': 'aws-access-token',
+            'Tags': [],
+            'Commit': '',
+            'SymlinkFile': '',
+        }
+        report = self._write_report(tmp_dir, [finding])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--dry-run', '--from-gitleaks', report, repo])
+        assert exc_info.value.code == 1

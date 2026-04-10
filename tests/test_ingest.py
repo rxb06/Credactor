@@ -202,6 +202,28 @@ class TestGitleaksSymlinkAndPath:
         captured = capsys.readouterr()
         assert 'traversal' in captured.err.lower() or 'outside' in captured.err.lower()
 
+    @pytest.mark.skipif(
+        not hasattr(os, 'symlink'), reason='symlinks not supported'
+    )
+    def test_gitleaks_symlink_outside_root_blocked(self, tmp_path, capsys):
+        """Symlink within target pointing outside root is blocked (SEC-40c)."""
+        target, _ = _make_target(tmp_path)
+        # Create an external file and a symlink inside the target pointing to it
+        external = tmp_path / 'external_secret.txt'
+        external.write_text('secret_value\n', encoding='utf-8')
+        link = target / 'src' / 'escape.py'
+        try:
+            link.symlink_to(external)
+        except (OSError, NotImplementedError):
+            pytest.skip('cannot create symlink in this environment')
+
+        finding = _make_gitleaks_finding(File='src/escape.py', Secret='secret_value')
+        report = _write_report(tmp_path, [finding])
+        results = ingest_gitleaks(str(report), str(target))
+        assert results == [], 'Symlink escaping target root must be blocked'
+        captured = capsys.readouterr()
+        assert 'traversal' in captured.err.lower() or 'outside' in captured.err.lower()
+
 
 class TestGitleaksFieldMapping:
     def test_gitleaks_multiline_finding(self, tmp_path):
