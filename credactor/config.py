@@ -44,6 +44,7 @@ class Config:
     target: str = '.'
     config_path: Optional[str] = None
     from_gitleaks: Optional[str] = None
+    from_trufflehog: Optional[str] = None
 
 
 def _find_project_root(start: Path) -> Path | None:
