@@ -158,6 +158,12 @@ def build_parser() -> argparse.ArgumentParser:
              'file paths in the report are resolved relative to the '
              'target directory',
     )
+    ingest.add_argument(
+        '--from-trufflehog', type=str, default=None, metavar='FILE',
+        help='[BETA] ingest findings from a TruffleHog JSON output file '
+             '(newline-delimited); file paths are resolved relative to '
+             'the target directory',
+    )
 
     return parser
 
@@ -194,12 +200,13 @@ def _main_inner(argv: list[str] | None = None) -> None:
         target=args.target,
         config_path=args.config,
         from_gitleaks=args.from_gitleaks,
+        from_trufflehog=args.from_trufflehog,
     )
 
     # SEC-40: --scan-history conflicts with external ingestion
-    if config.scan_history and config.from_gitleaks:
-        print('[ERROR] --scan-history cannot be combined with --from-gitleaks. '
-              'External findings reference on-disc files; '
+    if config.scan_history and (config.from_gitleaks or config.from_trufflehog):
+        print('[ERROR] --scan-history cannot be combined with --from-gitleaks '
+              'or --from-trufflehog. External findings reference on-disc files; '
               'history scan references committed content.', file=sys.stderr)
         sys.exit(2)
 
@@ -360,6 +367,31 @@ def _main_inner(argv: list[str] | None = None) -> None:
                 if not allowlist.is_suppressed(f['file'], f['line'], f['full_value'])
             ]
             findings.extend(gitleaks_findings)
+        except ValueError as exc:
+            print(f'[ERROR] {exc}', file=sys.stderr)
+            sys.exit(2)
+
+    if config.from_trufflehog:
+        if not os.path.isfile(config.from_trufflehog):
+            print(f'[ERROR] TruffleHog file not found: {config.from_trufflehog}',
+                  file=sys.stderr)
+            sys.exit(2)
+        if os.path.isfile(target):
+            print(
+                '[ERROR] --from-trufflehog requires a directory target, not a file. '
+                'Pass the repository root directory so that file paths in the '
+                'TruffleHog report can be resolved correctly.',
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        from .ingest import ingest_trufflehog
+        try:
+            trufflehog_findings = ingest_trufflehog(config.from_trufflehog, target, config=config)
+            trufflehog_findings = [
+                f for f in trufflehog_findings
+                if not allowlist.is_suppressed(f['file'], f['line'], f['full_value'])
+            ]
+            findings.extend(trufflehog_findings)
         except ValueError as exc:
             print(f'[ERROR] {exc}', file=sys.stderr)
             sys.exit(2)
