@@ -1266,7 +1266,11 @@ class TestA4EncodingGuards:
         results = ingest_trufflehog(str(report), str(target), config=cfg)
         assert results == []
         captured = capsys.readouterr()
-        assert 'non-UTF-8' in captured.err or 'U+FFFD' in captured.err or 'replacement' in captured.err
+        assert (
+            'non-UTF-8' in captured.err
+            or 'U+FFFD' in captured.err
+            or 'replacement' in captured.err
+        )
 
     def test_trufflehog_valid_utf8_not_skipped(self, tmp_path):
         """A Raw field with valid non-ASCII UTF-8 (no U+FFFD) is not skipped."""

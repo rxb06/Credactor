@@ -393,7 +393,7 @@ class TestA8ExternalTypeInjection:
             'severity': 'high',
             'full_value': 'sk_live_test' + 'abc123456789',
             'value_preview': 'sk_live...',
-            'raw': f'key = "sk_live_test' + 'abc123456789"',
+            'raw': 'key = "sk_live_test' + 'abc123456789"',
         }
 
     def test_json_report_parseable_with_html_in_type(self):
