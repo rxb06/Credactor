@@ -274,8 +274,11 @@ def ingest_gitleaks(
         }
 
         # --- Commit (omit key when empty) ---
+        # P2: type-check before slicing — non-string Commit (e.g. int, list)
+        # would raise TypeError or produce an unhashable value that crashes
+        # deduplicate_findings later.
         commit = obj.get('Commit', '')
-        if commit:
+        if isinstance(commit, str) and commit:
             finding['commit'] = commit[:12]
 
         findings.append(finding)
@@ -463,7 +466,10 @@ def ingest_trufflehog(
                         file_path_raw = git.get('file', '') or ''
                         line_num = git.get('line', 1) or 1
                         raw_commit = git.get('commit', '') or ''
-                        if raw_commit:
+                        # P2: type-check before slicing — non-string commit
+                        # (e.g. int, list) would raise TypeError or produce an
+                        # unhashable value that crashes deduplicate_findings.
+                        if isinstance(raw_commit, str) and raw_commit:
                             commit = raw_commit[:12]
                         source_found = True
 

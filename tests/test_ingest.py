@@ -1436,3 +1436,117 @@ class TestA13SelfReferentialReport:
         results = ingest_trufflehog(str(report), str(target))
         assert len(results) == 1
         assert results[0]['full_value'] == 'AKIAIOSFODNN7EXAMPLE'
+
+
+# ---------------------------------------------------------------------------
+# P2 — Commit type guards (Gitleaks + TruffleHog)
+# ---------------------------------------------------------------------------
+
+class TestCommitTypeGuard:
+    """P2: Commit fields must be type-checked before slicing.
+
+    A non-string Commit (e.g. int or list) in a malformed report previously
+    raised TypeError at parse time or produced an unhashable value that
+    crashed deduplicate_findings later.
+    """
+
+    # --- Gitleaks ---
+
+    def test_gitleaks_commit_int_skipped(self, tmp_path):
+        """Gitleaks Commit=123 (int) must not crash — finding is kept, commit omitted."""
+        target, _ = _make_target(tmp_path)
+        finding = _make_gitleaks_finding(Commit=123)
+        report = _write_report(tmp_path, [finding])
+        results = ingest_gitleaks(str(report), str(target))
+        assert len(results) == 1
+        assert 'commit' not in results[0]
+
+    def test_gitleaks_commit_list_skipped(self, tmp_path):
+        """Gitleaks Commit=['abc'] (list) must not crash — commit omitted."""
+        target, _ = _make_target(tmp_path)
+        finding = _make_gitleaks_finding(Commit=['abc123def456'])
+        report = _write_report(tmp_path, [finding])
+        results = ingest_gitleaks(str(report), str(target))
+        assert len(results) == 1
+        assert 'commit' not in results[0]
+
+    def test_gitleaks_commit_none_skipped(self, tmp_path):
+        """Gitleaks Commit=None must not crash — commit omitted."""
+        target, _ = _make_target(tmp_path)
+        finding = _make_gitleaks_finding(Commit=None)
+        report = _write_report(tmp_path, [finding])
+        results = ingest_gitleaks(str(report), str(target))
+        assert len(results) == 1
+        assert 'commit' not in results[0]
+
+    def test_gitleaks_commit_string_kept(self, tmp_path):
+        """Gitleaks Commit='abc123def456789' (string) is truncated to 12 chars normally."""
+        target, _ = _make_target(tmp_path)
+        finding = _make_gitleaks_finding(Commit='abc123def456789')
+        report = _write_report(tmp_path, [finding])
+        results = ingest_gitleaks(str(report), str(target))
+        assert len(results) == 1
+        assert results[0]['commit'] == 'abc123def456'
+
+    def test_gitleaks_commit_int_survives_dedup(self, tmp_path):
+        """Finding with Commit=123 must survive deduplicate_findings (no unhashable crash)."""
+        target, _ = _make_target(tmp_path)
+        finding = _make_gitleaks_finding(Commit=123)
+        report = _write_report(tmp_path, [finding])
+        results = ingest_gitleaks(str(report), str(target))
+        deduped = deduplicate_findings(results)
+        assert len(deduped) == 1
+
+    # --- TruffleHog ---
+
+    def test_trufflehog_commit_int_skipped(self, tmp_path):
+        """TruffleHog Git.commit=123 (int) must not crash — commit omitted."""
+        target, _ = _make_th_target(tmp_path)
+        finding = _make_trufflehog_finding(
+            SourceMetadata={'Data': {'Git': {
+                'file': 'src/config.py', 'line': 1, 'commit': 123,
+            }}},
+        )
+        report = _write_ndjson(tmp_path, [finding])
+        results = ingest_trufflehog(str(report), str(target))
+        assert len(results) == 1
+        assert 'commit' not in results[0]
+
+    def test_trufflehog_commit_list_skipped(self, tmp_path):
+        """TruffleHog Git.commit=['abc'] (list) must not crash — commit omitted."""
+        target, _ = _make_th_target(tmp_path)
+        finding = _make_trufflehog_finding(
+            SourceMetadata={'Data': {'Git': {
+                'file': 'src/config.py', 'line': 1, 'commit': ['abc123def456'],
+            }}},
+        )
+        report = _write_ndjson(tmp_path, [finding])
+        results = ingest_trufflehog(str(report), str(target))
+        assert len(results) == 1
+        assert 'commit' not in results[0]
+
+    def test_trufflehog_commit_string_kept(self, tmp_path):
+        """TruffleHog Git.commit='abc123def456789' (string) is truncated to 12 chars."""
+        target, _ = _make_th_target(tmp_path)
+        finding = _make_trufflehog_finding(
+            SourceMetadata={'Data': {'Git': {
+                'file': 'src/config.py', 'line': 1, 'commit': 'abc123def456789',
+            }}},
+        )
+        report = _write_ndjson(tmp_path, [finding])
+        results = ingest_trufflehog(str(report), str(target))
+        assert len(results) == 1
+        assert results[0]['commit'] == 'abc123def456'
+
+    def test_trufflehog_commit_int_survives_dedup(self, tmp_path):
+        """TruffleHog finding with Git.commit=123 must survive dedup (no unhashable crash)."""
+        target, _ = _make_th_target(tmp_path)
+        finding = _make_trufflehog_finding(
+            SourceMetadata={'Data': {'Git': {
+                'file': 'src/config.py', 'line': 1, 'commit': 123,
+            }}},
+        )
+        report = _write_ndjson(tmp_path, [finding])
+        results = ingest_trufflehog(str(report), str(target))
+        deduped = deduplicate_findings(results)
+        assert len(deduped) == 1
