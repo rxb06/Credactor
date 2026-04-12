@@ -1437,6 +1437,57 @@ class TestA13SelfReferentialReport:
         assert len(results) == 1
         assert results[0]['full_value'] == 'AKIAIOSFODNN7EXAMPLE'
 
+    def test_gitleaks_self_referential_normcase_called_on_both_sides(self, tmp_path):
+        """A13 normcase: os.path.normcase is invoked for both sides of the self-ref comparison.
+
+        Uses wraps= to intercept calls without changing return values. A call_count
+        of >= 2 on a self-referential finding proves both sides of the guard are
+        folded — a regression where normcase is removed would drop the count to 0.
+        """
+        import unittest.mock as mock
+        import os
+
+        target = tmp_path / 'repo'
+        target.mkdir()
+        report = target / 'gitleaks_report.json'
+        finding = _make_gitleaks_finding(
+            File='gitleaks_report.json',
+            Secret='some-secret',
+            Match='some-secret',
+            StartLine=1,
+        )
+        report.write_text(json.dumps([finding]), encoding='utf-8')
+
+        with mock.patch('credactor.ingest.os.path.normcase', wraps=os.path.normcase) as m:
+            results = ingest_gitleaks(str(report), str(target))
+
+        assert results == []
+        # Both sides of the self-ref comparison must be normcase-d.
+        assert m.call_count >= 2
+
+    def test_trufflehog_self_referential_normcase_called_on_both_sides(self, tmp_path):
+        """A13 normcase: os.path.normcase is invoked for both sides of the TruffleHog self-ref guard."""
+        import unittest.mock as mock
+        import os
+
+        target = tmp_path / 'repo'
+        target.mkdir()
+        report = target / 'trufflehog_output.json'
+        finding = _make_trufflehog_finding(
+            Raw='some-secret',
+            SourceMetadata={'Data': {'Filesystem': {
+                'file': 'trufflehog_output.json',
+                'line': 1,
+            }}},
+        )
+        report.write_text(json.dumps(finding) + '\n', encoding='utf-8')
+
+        with mock.patch('credactor.ingest.os.path.normcase', wraps=os.path.normcase) as m:
+            results = ingest_trufflehog(str(report), str(target))
+
+        assert results == []
+        assert m.call_count >= 2
+
 
 # ---------------------------------------------------------------------------
 # P2 — Commit type guards (Gitleaks + TruffleHog)

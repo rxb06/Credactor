@@ -228,8 +228,9 @@ def ingest_gitleaks(
 
         # A13: skip findings whose resolved path is the report file itself.
         # Without this guard, --fix-all would attempt to redact the JSON report,
-        # corrupting it mid-run.
-        if resolved == filepath_resolved:
+        # corrupting it mid-run. normcase handles case-insensitive filesystems
+        # (e.g. macOS HFS+, Windows NTFS) where casing may differ.
+        if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
             if verbose:
                 print(
                     f'[WARN] Skipping Gitleaks finding: path resolves to the report '
@@ -509,7 +510,8 @@ def ingest_trufflehog(
                 continue
 
             # A13: skip findings whose resolved path is the report file itself.
-            if resolved == filepath_resolved:
+            # normcase handles case-insensitive filesystems where casing may differ.
+            if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
                 if verbose:
                     print(
                         f'[WARN] Skipping TruffleHog finding: path resolves to the report '
