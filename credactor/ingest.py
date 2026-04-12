@@ -609,8 +609,11 @@ def deduplicate_findings(
     def _base(f: dict) -> tuple:
         path_norm = os.path.normpath(os.path.realpath(f.get('file', '')))
         line = f.get('line', 1)
+        # Use surrogateescape so lone surrogate code points (which can arrive
+        # from scanner paths read with errors='surrogateescape') don't raise
+        # UnicodeEncodeError and crash the dedup pass.
         value_hash = hashlib.sha256(
-            f.get('full_value', '').encode('utf-8')
+            f.get('full_value', '').encode('utf-8', errors='surrogateescape')
         ).hexdigest()[:16]
         return (path_norm, line, value_hash)
 

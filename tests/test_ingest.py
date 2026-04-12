@@ -1550,3 +1550,43 @@ class TestCommitTypeGuard:
         results = ingest_trufflehog(str(report), str(target))
         deduped = deduplicate_findings(results)
         assert len(deduped) == 1
+
+
+class TestDedupSurrogateHash:
+    """deduplicate_findings must not raise UnicodeEncodeError on surrogate full_value.
+
+    Lone surrogates can arrive when scanner content was read with
+    errors='surrogateescape' (undecodable bytes on the filesystem).
+    The sha256 encode step must handle them without crashing.
+    """
+
+    def _surrogate_finding(self, extra='') -> dict:
+        # \udcff is a lone surrogate produced by surrogateescape for byte 0xff
+        return _make_finding(full_value='secret\udcff' + extra)
+
+    def test_surrogate_in_full_value_does_not_crash(self):
+        """dedup must not raise UnicodeEncodeError on a lone surrogate in full_value."""
+        findings = [self._surrogate_finding()]
+        result = deduplicate_findings(findings)   # must not raise
+        assert len(result) == 1
+
+    def test_two_identical_surrogate_findings_deduplicated(self):
+        """Two findings with the same surrogate-containing value dedup to one."""
+        f1 = self._surrogate_finding()
+        f2 = self._surrogate_finding()
+        result = deduplicate_findings([f1, f2])
+        assert len(result) == 1
+
+    def test_two_different_surrogate_values_both_kept(self):
+        """Findings with distinct surrogate values are treated as distinct."""
+        f1 = self._surrogate_finding('a')
+        f2 = self._surrogate_finding('b')
+        result = deduplicate_findings([f1, f2])
+        assert len(result) == 2
+
+    def test_surrogate_mixed_with_clean_finding_both_kept(self):
+        """A surrogate finding and a clean finding at different locations are both kept."""
+        f_surrogate = self._surrogate_finding()
+        f_clean = _make_finding(full_value='clean_secret_value')
+        result = deduplicate_findings([f_surrogate, f_clean])
+        assert len(result) == 2
