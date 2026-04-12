@@ -31,9 +31,16 @@ def _is_within_root(path_str: str, root_str: str) -> bool:
 
     Appends os.sep AFTER normpath to prevent prefix collision
     (e.g. /tmp/repo must not match /tmp/repo_evil).
+
+    A11: os.path.normcase() is added for Windows defense-in-depth — it
+    lowercases paths on Windows (NTFS case-insensitive) so that a path
+    differing only in case from the root is not incorrectly treated as
+    outside it.  normcase() is a no-op on Linux (case-sensitive) and
+    macOS (Path.resolve() at all call sites already returns canonical case
+    via the OS, so paths entering here are already case-consistent).
     """
-    norm_path = os.path.normpath(path_str)
-    norm_root = os.path.normpath(root_str)
+    norm_path = os.path.normcase(os.path.normpath(path_str))
+    norm_root = os.path.normcase(os.path.normpath(root_str))
     return norm_path == norm_root or norm_path.startswith(norm_root + os.sep)
 
 

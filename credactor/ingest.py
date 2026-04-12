@@ -5,6 +5,7 @@ SEC-40: All parsing uses stdlib json only (zero runtime deps policy).
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import os
 import sys
@@ -120,6 +121,7 @@ def ingest_gitleaks(
     """
     verbose = config.verbose if config else False
     target_path = Path(target).resolve()
+    filepath_resolved = str(Path(filepath).resolve())  # A13: precompute for self-ref guard
     if target_path.is_file():
         # Defensive guard: callers should pass the repo root directory, not a
         # file. Using the file's parent prevents broken path joins like
@@ -149,12 +151,20 @@ def ingest_gitleaks(
         )
 
     # Load JSON
+    # A4: use errors='strict' so non-UTF-8 bytes raise UnicodeDecodeError rather
+    # than being silently replaced with U+FFFD.  A Secret containing U+FFFD would
+    # never match the source file, causing silent redaction failure.
     try:
-        with open(filepath, encoding='utf-8', errors='replace') as fh:
+        with open(filepath, encoding='utf-8', errors='strict') as fh:
             data = json.load(fh)
     except (OSError, PermissionError) as exc:
         raise ValueError(
             f'Cannot open Gitleaks file {filepath!r}: {exc}'
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f'Gitleaks file {filepath!r} contains non-UTF-8 bytes; '
+            f'cannot parse safely (A4): {exc}'
         ) from exc
     except json.JSONDecodeError as exc:
         raise ValueError(
@@ -216,6 +226,19 @@ def ingest_gitleaks(
             )
             continue
 
+        # A13: skip findings whose resolved path is the report file itself.
+        # Without this guard, --fix-all would attempt to redact the JSON report,
+        # corrupting it mid-run. normcase handles case-insensitive filesystems
+        # (e.g. macOS HFS+, Windows NTFS) where casing may differ.
+        if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
+            if verbose:
+                print(
+                    f'[WARN] Skipping Gitleaks finding: path resolves to the report '
+                    f'file itself ({resolved!r}); skipping to avoid self-corruption.',
+                    file=sys.stderr,
+                )
+            continue
+
         if verbose and not os.path.isfile(resolved):
             print(f'[WARN] Gitleaks finding references missing file: {resolved!r}',
                   file=sys.stderr)
@@ -252,8 +275,11 @@ def ingest_gitleaks(
         }
 
         # --- Commit (omit key when empty) ---
+        # P2: type-check before slicing — non-string Commit (e.g. int, list)
+        # would raise TypeError or produce an unhashable value that crashes
+        # deduplicate_findings later.
         commit = obj.get('Commit', '')
-        if commit:
+        if isinstance(commit, str) and commit:
             finding['commit'] = commit[:12]
 
         findings.append(finding)
@@ -326,6 +352,23 @@ def ingest_trufflehog(
         target_path = target_path.parent
     target_resolved = str(target_path)
 
+    filepath_resolved = str(Path(filepath).resolve())  # A13: precompute for self-ref guard
+
+    # SEC-40b / A1: file-size guard to prevent OOM on a multi-GB single-line NDJSON.
+    # The per-line _MAX_FINDINGS cap fires only after json.loads() succeeds, so a
+    # single line that is many GB long will exhaust memory before the cap can apply.
+    try:
+        report_size = os.path.getsize(filepath)
+    except OSError as exc:
+        raise ValueError(
+            f'Cannot open TruffleHog file {filepath!r}: {exc}'
+        ) from exc
+    if report_size > _MAX_REPORT_BYTES:
+        raise ValueError(
+            f'TruffleHog file {filepath!r} is {report_size:,} bytes; refusing to '
+            f'parse files over {_MAX_REPORT_BYTES:,} bytes (SEC-40b memory guard).'
+        )
+
     try:
         fh = open(filepath, encoding='utf-8', errors='replace')
     except (OSError, PermissionError) as exc:
@@ -381,10 +424,25 @@ def ingest_trufflehog(
                         file=sys.stderr,
                     )
                 continue
-            # TruffleHog URL-encodes special characters in URI-based credentials
+            # A4: Guard against corrupted values caused by errors='replace' substituting
+            # U+FFFD for non-UTF-8 bytes in the NDJSON.  A Raw value containing U+FFFD
+            # will never match the actual source file content, causing silent redaction
+            # failure.  Skip the finding and warn rather than storing a bad full_value.
+            if '\ufffd' in raw_secret:
+                if verbose:
+                    print(
+                        f'[WARN] TruffleHog line {lineno_file}: Raw field contains '
+                        f'non-UTF-8 bytes (replacement character U+FFFD); skipping '
+                        f'to avoid corrupted redaction (A4).',
+                        file=sys.stderr,
+                    )
+                continue
+            # A2: TruffleHog URL-encodes special characters in URI-based credentials
             # (e.g. '@' → '%40' in MongoDB/PostgreSQL connection strings).
-            # Decode so full_value matches the literal text in the source file.
-            raw_secret = urllib.parse.unquote(raw_secret)
+            # Save both forms; the right form is selected after source-line synthesis
+            # so we can verify which encoding is actually present in the file.
+            _raw_encoded = raw_secret
+            _raw_decoded = urllib.parse.unquote(raw_secret)
 
             # --- Source metadata ---
             source_meta = obj.get('SourceMetadata', {})
@@ -409,7 +467,10 @@ def ingest_trufflehog(
                         file_path_raw = git.get('file', '') or ''
                         line_num = git.get('line', 1) or 1
                         raw_commit = git.get('commit', '') or ''
-                        if raw_commit:
+                        # P2: type-check before slicing — non-string commit
+                        # (e.g. int, list) would raise TypeError or produce an
+                        # unhashable value that crashes deduplicate_findings.
+                        if isinstance(raw_commit, str) and raw_commit:
                             commit = raw_commit[:12]
                         source_found = True
 
@@ -448,6 +509,17 @@ def ingest_trufflehog(
                 )
                 continue
 
+            # A13: skip findings whose resolved path is the report file itself.
+            # normcase handles case-insensitive filesystems where casing may differ.
+            if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
+                if verbose:
+                    print(
+                        f'[WARN] Skipping TruffleHog finding: path resolves to the report '
+                        f'file itself ({resolved!r}); skipping to avoid self-corruption.',
+                        file=sys.stderr,
+                    )
+                continue
+
             if verbose and not os.path.isfile(resolved):
                 print(
                     f'[WARN] TruffleHog finding references missing file: {resolved!r}',
@@ -460,6 +532,24 @@ def ingest_trufflehog(
 
             # --- Synthesise raw context line ---
             raw_ctx = _synthesise_raw(resolved, line_num)
+
+            # A2: Select the encoding form that actually appears in the source line.
+            # If TruffleHog URL-encoded the value (e.g. %40 → @) but the source file
+            # contains the literal encoded form, the decoded form won't match and
+            # redaction fails silently.  Prefer decoded; fall back to encoded only when
+            # the encoded form is visible in the source line and the decoded form is not.
+            if _raw_encoded == _raw_decoded:
+                # No percent-encoding in this value — no choice to make.
+                raw_secret = _raw_decoded
+            elif raw_ctx and _raw_decoded in raw_ctx:
+                raw_secret = _raw_decoded
+            elif raw_ctx and _raw_encoded in raw_ctx:
+                raw_secret = _raw_encoded
+            else:
+                # Source line unavailable or neither form matched; default to decoded
+                # (what TruffleHog originally extracted, most likely correct).
+                raw_secret = _raw_decoded
+
             if not raw_ctx:
                 raw_ctx = raw_secret  # fallback per plan section 3.2.1
 
@@ -491,3 +581,72 @@ def ingest_trufflehog(
             count += 1
 
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Deduplication
+# ---------------------------------------------------------------------------
+
+def deduplicate_findings(
+    findings: list[dict],
+    *,
+    config: Optional[Config] = None,
+) -> list[dict]:
+    """Remove duplicate findings, keeping the first (highest-fidelity) occurrence.
+
+    Dedup key: (normalised_file_path, line_number, sha256_prefix_of_full_value).
+
+    Commit-aware rules (section 7.3 of the plan):
+    - Findings with different ``commit`` values are NOT deduplicated.
+    - A no-commit (working-tree) finding beats a committed finding at the same
+      file:line:value — the working-tree one is kept and the committed one is
+      dropped.
+
+    Expected call order from cli.py: native findings first, then gitleaks,
+    then trufflehog.  First occurrence wins, so priority is automatically
+    Credactor > Gitleaks > TruffleHog.
+    """
+    verbose = config.verbose if config else False
+
+    def _base(f: dict) -> tuple:
+        path_norm = os.path.normpath(os.path.realpath(f.get('file', '')))
+        line = f.get('line', 1)
+        # Use surrogateescape so lone surrogate code points (which can arrive
+        # from scanner paths read with errors='surrogateescape') don't raise
+        # UnicodeEncodeError and crash the dedup pass.
+        value_hash = hashlib.sha256(
+            f.get('full_value', '').encode('utf-8', errors='surrogateescape')
+        ).hexdigest()[:16]
+        return (path_norm, line, value_hash)
+
+    # Pass 1: collect (path, line, value_hash) bases that have at least one
+    # no-commit (working-tree) finding.  This lets us suppress committed
+    # duplicates that arrive *before* the working-tree finding in the list.
+    no_commit_bases: set[tuple] = set()
+    for f in findings:
+        if not f.get('commit'):
+            no_commit_bases.add(_base(f))
+
+    # Pass 2: deduplicate in order; first occurrence wins.
+    result: list[dict] = []
+    seen: set[tuple] = set()
+
+    for f in findings:
+        base = _base(f)
+        commit = f.get('commit')
+
+        if commit and base in no_commit_bases:
+            # A working-tree finding covers this committed dup — skip.
+            continue
+
+        key = (*base, commit)  # None for working-tree, hash for history
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(f)
+
+    removed = len(findings) - len(result)
+    if verbose and removed:
+        print(f'  [INFO] Deduplicated {removed} finding(s).', file=sys.stderr)
+
+    return result

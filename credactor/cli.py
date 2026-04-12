@@ -396,6 +396,11 @@ def _main_inner(argv: list[str] | None = None) -> None:
             print(f'[ERROR] {exc}', file=sys.stderr)
             sys.exit(2)
 
+    # --- Deduplicate when external findings were ingested ---
+    if config.from_gitleaks or config.from_trufflehog:
+        from .ingest import deduplicate_findings
+        findings = deduplicate_findings(findings, config=config)
+
     # Report errored files and fail if --fail-on-error
     if errored_files:
         print(f'\n[WARN] {len(errored_files)} file(s) could not be scanned:',
