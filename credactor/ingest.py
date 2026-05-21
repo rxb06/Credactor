@@ -13,6 +13,7 @@ import urllib.parse
 from pathlib import Path
 
 from .config import Config
+from .types import Finding
 from .utils import detect_encoding
 from .walker import _is_within_root
 
@@ -104,6 +105,55 @@ def _synthesise_raw(filepath: str, lineno: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Shared path-resolution helper for external scanners
+# ---------------------------------------------------------------------------
+
+def _resolve_external_finding_path(
+    raw_file: str,
+    target_resolved: str,
+    filepath_resolved: str,
+    *,
+    scanner_name: str,
+    verbose: bool,
+) -> str | None:
+    """Resolve, traversal-check, and self-ref-check a path from an external
+    scanner finding. Returns the resolved path, or ``None`` to skip.
+
+    Combines SEC-40c (path traversal) and A13 (self-reference) guards plus
+    the optional missing-file warning, so both ingest_gitleaks and
+    ingest_trufflehog share identical handling.
+    """
+    resolved = str(Path(os.path.normpath(
+        os.path.join(target_resolved, raw_file))).resolve())
+
+    if not _is_within_root(resolved, target_resolved):
+        print(
+            f'[WARN] Skipping {scanner_name} finding: path {raw_file!r} '
+            f'resolves outside target directory (possible path traversal).',
+            file=sys.stderr,
+        )
+        return None
+
+    if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
+        if verbose:
+            print(
+                f'[WARN] Skipping {scanner_name} finding: path resolves to the '
+                f'report file itself ({resolved!r}); skipping to avoid '
+                f'self-corruption.',
+                file=sys.stderr,
+            )
+        return None
+
+    if verbose and not os.path.isfile(resolved):
+        print(
+            f'[WARN] {scanner_name} finding references missing file: {resolved!r}',
+            file=sys.stderr,
+        )
+
+    return resolved
+
+
+# ---------------------------------------------------------------------------
 # Gitleaks parser
 # ---------------------------------------------------------------------------
 
@@ -112,7 +162,7 @@ def ingest_gitleaks(
     target: str,
     *,
     config: Config | None = None,
-) -> list[dict]:
+) -> list[Finding]:
     """Parse a Gitleaks JSON report and return a list of Credactor finding dicts.
 
     SEC-40a: validates top-level is a list.
@@ -187,7 +237,7 @@ def ingest_gitleaks(
         )
         data = data[:_MAX_FINDINGS]
 
-    findings: list[dict] = []
+    findings: list[Finding] = []
 
     for obj in data:
         if not isinstance(obj, dict):
@@ -213,35 +263,12 @@ def ingest_gitleaks(
                       file=sys.stderr)
             continue
 
-        # Resolve path relative to target; resolve symlinks so SEC-40c
-        # containment check cannot be bypassed via a symlink pointing outside.
-        resolved = str(Path(os.path.normpath(os.path.join(target_resolved, raw_file))).resolve())
-
-        # SEC-40c: path traversal check (also catches symlinks outside root)
-        if not _is_within_root(resolved, target_resolved):
-            print(
-                f'[WARN] Skipping Gitleaks finding: path {raw_file!r} resolves '
-                f'outside target directory (possible path traversal).',
-                file=sys.stderr,
-            )
+        resolved = _resolve_external_finding_path(
+            raw_file, target_resolved, filepath_resolved,
+            scanner_name='Gitleaks', verbose=verbose,
+        )
+        if resolved is None:
             continue
-
-        # A13: skip findings whose resolved path is the report file itself.
-        # Without this guard, --fix-all would attempt to redact the JSON report,
-        # corrupting it mid-run. normcase handles case-insensitive filesystems
-        # (e.g. macOS HFS+, Windows NTFS) where casing may differ.
-        if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
-            if verbose:
-                print(
-                    f'[WARN] Skipping Gitleaks finding: path resolves to the report '
-                    f'file itself ({resolved!r}); skipping to avoid self-corruption.',
-                    file=sys.stderr,
-                )
-            continue
-
-        if verbose and not os.path.isfile(resolved):
-            print(f'[WARN] Gitleaks finding references missing file: {resolved!r}',
-                  file=sys.stderr)
 
         # --- Line number ---
         line = obj.get('StartLine', 1)
@@ -264,7 +291,7 @@ def ingest_gitleaks(
         severity = _gitleaks_severity(rule_id, tags if isinstance(tags, list) else [])
 
         # --- Finding dict ---
-        finding: dict = {
+        finding: Finding = {
             'file': resolved,
             'line': line,
             'type': ftype,
@@ -333,7 +360,7 @@ def ingest_trufflehog(
     target: str,
     *,
     config: Config | None = None,
-) -> list[dict]:
+) -> list[Finding]:
     """Parse a TruffleHog NDJSON output file and return Credactor finding dicts.
 
     SEC-40a: each line is validated as a JSON object.
@@ -376,7 +403,7 @@ def ingest_trufflehog(
             f'Cannot open TruffleHog file {filepath!r}: {exc}'
         ) from exc
 
-    findings: list[dict] = []
+    findings: list[Finding] = []
     count = 0
 
     with fh:
@@ -495,36 +522,12 @@ def ingest_trufflehog(
                     )
                 continue
 
-            # Resolve path relative to target
-            resolved = str(
-                Path(os.path.normpath(os.path.join(target_resolved, file_path_raw))).resolve()
+            resolved = _resolve_external_finding_path(
+                file_path_raw, target_resolved, filepath_resolved,
+                scanner_name='TruffleHog', verbose=verbose,
             )
-
-            # SEC-40c: path traversal check
-            if not _is_within_root(resolved, target_resolved):
-                print(
-                    f'[WARN] Skipping TruffleHog finding: path {file_path_raw!r} resolves '
-                    f'outside target directory (possible path traversal).',
-                    file=sys.stderr,
-                )
+            if resolved is None:
                 continue
-
-            # A13: skip findings whose resolved path is the report file itself.
-            # normcase handles case-insensitive filesystems where casing may differ.
-            if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
-                if verbose:
-                    print(
-                        f'[WARN] Skipping TruffleHog finding: path resolves to the report '
-                        f'file itself ({resolved!r}); skipping to avoid self-corruption.',
-                        file=sys.stderr,
-                    )
-                continue
-
-            if verbose and not os.path.isfile(resolved):
-                print(
-                    f'[WARN] TruffleHog finding references missing file: {resolved!r}',
-                    file=sys.stderr,
-                )
 
             # Validate line number
             if not isinstance(line_num, int) or line_num < 1:
@@ -564,7 +567,7 @@ def ingest_trufflehog(
             severity = _trufflehog_severity(detector_name, verified)
 
             # --- Finding dict ---
-            finding: dict = {
+            finding: Finding = {
                 'file': resolved,
                 'line': line_num,
                 'type': ftype,
@@ -588,10 +591,10 @@ def ingest_trufflehog(
 # ---------------------------------------------------------------------------
 
 def deduplicate_findings(
-    findings: list[dict],
+    findings: list[Finding],
     *,
     config: Config | None = None,
-) -> list[dict]:
+) -> list[Finding]:
     """Remove duplicate findings, keeping the first (highest-fidelity) occurrence.
 
     Dedup key: (normalised_file_path, line_number, sha256_prefix_of_full_value).
@@ -628,7 +631,7 @@ def deduplicate_findings(
             no_commit_bases.add(_base(f))
 
     # Pass 2: deduplicate in order; first occurrence wins.
-    result: list[dict] = []
+    result: list[Finding] = []
     seen: set[tuple] = set()
 
     for f in findings:

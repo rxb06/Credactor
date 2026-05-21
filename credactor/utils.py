@@ -4,9 +4,26 @@ Utility functions: entropy calculation and file encoding detection.
 Addresses: #16 (encoding detection), #28 (optimized entropy)
 """
 
+from __future__ import annotations
+
 import math
 import re
+import sys
 from collections import Counter
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import Config
+
+
+def log_verbose(config: Config | None, msg: str) -> None:
+    """Emit *msg* to stderr only when ``config.verbose`` is set.
+
+    Centralises the ``if config and config.verbose: print(...)`` idiom that
+    was scattered across scanner/walker/ingest modules.
+    """
+    if config and config.verbose:
+        print(msg, file=sys.stderr)
 
 
 def entropy(s: str) -> float:

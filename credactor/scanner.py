@@ -24,7 +24,8 @@ from .patterns import (
     xml_attr_finditer,
 )
 from .suppressions import AllowList, has_inline_suppression
-from .utils import detect_encoding, entropy
+from .types import Finding
+from .utils import detect_encoding, entropy, log_verbose
 
 # Global defaults (can be overridden by Config)
 ENTROPY_THRESHOLD = 3.5
@@ -197,9 +198,9 @@ def scan_line(
     *,
     config: Config | None = None,
     allowlist: AllowList | None = None,
-) -> list[dict]:
+) -> list[Finding]:
     """Analyse a single line and return a list of credential findings."""
-    findings: list[dict] = []
+    findings: list[Finding] = []
     stripped = line.strip()
 
     if not stripped:
@@ -208,9 +209,7 @@ def scan_line(
     # #3 — inline suppression
     if has_inline_suppression(line):
         # SEC-27: Verbose suppression audit trail
-        if config and config.verbose:
-            print(f'  [SKIP] {filepath}:{lineno} suppressed by inline credactor:ignore',
-                  file=sys.stderr)
+        log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by inline credactor:ignore')
         return findings
 
     # SEC-06: Cap line length to bound worst-case regex execution time
@@ -241,15 +240,11 @@ def scan_line(
                 # hex/high-entropy: skip if line contains hash/digest variable
                 is_hex_like = label in ('hex credential', 'high-entropy string')
                 if is_hex_like and _HASH_CONTEXT_RE.search(line):
-                    if config and config.verbose:
-                        print(f'  [SKIP] {filepath}:{lineno} suppressed by hash context',
-                              file=sys.stderr)
+                    log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by hash context')
                     continue
 
                 if _is_safe_value(val, extra_safe):
-                    if config and config.verbose:
-                        print(f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic',
-                              file=sys.stderr)
+                    log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic')
                     continue
                 if len(val) < min_len and label != 'private key header':
                     continue
@@ -258,9 +253,7 @@ def scan_line(
 
                 # Allowlist check
                 if allowlist and allowlist.is_suppressed(filepath, lineno, val):
-                    if config and config.verbose:
-                        print(f'  [SKIP] {filepath}:{lineno} suppressed by allowlist',
-                              file=sys.stderr)
+                    log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by allowlist')
                     continue
 
                 findings.append({
@@ -281,18 +274,14 @@ def scan_line(
             if not CRED_VAR_PATTERNS.search(xml_key):
                 continue
             if _is_safe_value(xml_val, extra_safe):
-                if config and config.verbose:
-                    print(f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic',
-                          file=sys.stderr)
+                log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic')
                 continue
             if len(xml_val.strip()) < min_len:
                 continue
             if entropy(xml_val.strip()) < ent_threshold:
                 continue
             if allowlist and allowlist.is_suppressed(filepath, lineno, xml_val):
-                if config and config.verbose:
-                    print(f'  [SKIP] {filepath}:{lineno} suppressed by allowlist',
-                          file=sys.stderr)
+                log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by allowlist')
                 continue
             findings.append({
                 'file':          filepath,
@@ -330,9 +319,7 @@ def scan_line(
         if any(low_var.endswith(s) for s in _HASH_VAR_SUFFIXES):
             continue
         if _is_safe_value(val, extra_safe):
-            if config and config.verbose:
-                print(f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic',
-                      file=sys.stderr)
+            log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic')
             continue
         val_stripped = val.strip()
         if len(val_stripped) < min_len:
@@ -340,9 +327,7 @@ def scan_line(
         if entropy(val_stripped) < ent_threshold:
             continue
         if allowlist and allowlist.is_suppressed(filepath, lineno, val_stripped):
-            if config and config.verbose:
-                print(f'  [SKIP] {filepath}:{lineno} suppressed by allowlist',
-                      file=sys.stderr)
+            log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by allowlist')
             continue
 
         findings.append({
@@ -363,10 +348,10 @@ def scan_file(
     *,
     config: Config | None = None,
     allowlist: AllowList | None = None,
-) -> list[dict]:
+) -> list[Finding]:
     """Scan a single file for credential findings.
     """
-    findings: list[dict] = []
+    findings: list[Finding] = []
 
     #file size guard to prevent OOM on huge files | Hard-Cap at 50MB
     try:
@@ -444,7 +429,7 @@ def scan_file(
 def _scan_multiline_strings(
     filepath: str,
     lines: list[str],
-    existing_findings: list[dict],
+    existing_findings: list[Finding],
     config: Config | None,
     allowlist: AllowList | None,
 ) -> None:

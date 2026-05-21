@@ -2,7 +2,35 @@
 
 import os
 
+import pytest
+
 from credactor.config import Config, apply_config_file, load_config_file
+
+
+class TestConfigPostInit:
+    def test_rejects_negative_entropy(self):
+        with pytest.raises(ValueError, match='entropy_threshold'):
+            Config(entropy_threshold=-1.0)
+
+    def test_rejects_excessive_entropy(self):
+        with pytest.raises(ValueError, match='entropy_threshold'):
+            Config(entropy_threshold=99.0)
+
+    def test_rejects_zero_min_value_length(self):
+        with pytest.raises(ValueError, match='min_value_length'):
+            Config(min_value_length=0)
+
+    def test_rejects_bad_replace_mode(self):
+        with pytest.raises(ValueError, match='replace_mode'):
+            Config(replace_mode='nonsense')
+
+    def test_rejects_bad_output_format(self):
+        with pytest.raises(ValueError, match='output_format'):
+            Config(output_format='xml')
+
+    def test_accepts_valid_extremes(self):
+        Config(entropy_threshold=0.0, min_value_length=1)
+        Config(entropy_threshold=6.0, min_value_length=200)
 
 
 class TestConfigDefaults:

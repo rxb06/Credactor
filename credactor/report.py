@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import __version__
+from .types import Finding
 from .utils import mask_secret, sanitize_for_terminal
 
 # ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ def _should_use_color(no_color: bool) -> bool:
 # Text report (#2, #29 — masked secrets)
 # ---------------------------------------------------------------------------
 def print_report(
-    findings: list[dict],
+    findings: list[Finding],
     root: str,
     *,
     no_color: bool = False,
@@ -68,7 +69,7 @@ def print_report(
 
     color = _should_use_color(no_color)
     root_path = Path(root).resolve()
-    by_file: dict[str, list[dict]] = {}
+    by_file: dict[str, list[Finding]] = {}
     for f in findings:
         by_file.setdefault(f['file'], []).append(f)
 
@@ -117,7 +118,7 @@ def _mask_in_line(raw_line: str, full_value: str) -> str:
 # ---------------------------------------------------------------------------
 # JSON output (#7)
 # ---------------------------------------------------------------------------
-def json_report(findings: list[dict], root: str) -> str:
+def json_report(findings: list[Finding], root: str) -> str:
     """Return findings as a JSON string."""
     root_path = Path(root).resolve()
     output = []
@@ -140,7 +141,7 @@ def json_report(findings: list[dict], root: str) -> str:
 # ---------------------------------------------------------------------------
 # SARIF output (#7)
 # ---------------------------------------------------------------------------
-def sarif_report(findings: list[dict], root: str) -> str:
+def sarif_report(findings: list[Finding], root: str) -> str:
     """Return findings as a SARIF 2.1.0 JSON string."""
     root_path = Path(root).resolve()
 

@@ -20,6 +20,8 @@ from .gitignore import load_gitignore_patterns, matches_gitignore
 from .patterns import SKIP_DIRS, SKIP_FILES
 from .scanner import scan_file, should_scan_file
 from .suppressions import AllowList
+from .types import Finding
+from .utils import log_verbose
 
 
 def _is_within_root(path_str: str, root_str: str) -> bool:
@@ -60,7 +62,7 @@ def walk_and_scan(
     root: str,
     config: Config,
     allowlist: AllowList | None = None,
-) -> tuple[list[dict], list[str], list[str], list[str]]:
+) -> tuple[list[Finding], list[str], list[str], list[str]]:
     """Single-pass directory walk
     Returns (findings, gitignore_skipped, json_files_available, errored_files).
     """
@@ -107,9 +109,7 @@ def walk_and_scan(
 
             # Allowlist file-level suppression
             if allowlist and allowlist.is_file_suppressed(full_path):
-                if config and config.verbose:
-                    print(f'  [SKIP] {full_path} suppressed by allowlist (file-level)',
-                          file=sys.stderr)
+                log_verbose(config, f'  [SKIP] {full_path} suppressed by allowlist (file-level)')
                 continue
 
             p = Path(filename)
@@ -132,12 +132,12 @@ def _parallel_scan(
     files: list[str],
     config: Config,
     allowlist: AllowList | None,
-) -> tuple[list[dict], list[str]]:
+) -> tuple[list[Finding], list[str]]:
     """Scan files using a thread pool (#27).
 
     Returns (findings, errored_files).
     """
-    all_findings: list[dict] = []
+    all_findings: list[Finding] = []
     errored: list[str] = []
 
     if not files:
@@ -215,7 +215,7 @@ def scan_staged_files(
     root: str,
     config: Config,
     allowlist: AllowList | None = None,
-) -> tuple[list[dict], list[str]]:
+) -> tuple[list[Finding], list[str]]:
     """Scan only files staged in the git index (``git diff --cached``).
 
     Returns (findings, errored_files).
@@ -279,7 +279,7 @@ def scan_git_history(
     config: Config,
     allowlist: AllowList | None = None,
     max_commits: int = 100,
-) -> list[dict]:
+) -> list[Finding]:
     """Scan ``git log -p`` output for credentials in committed history."""
     # SEC-04: Resolve path before passing to subprocess
     root_path = Path(root).resolve()
@@ -297,7 +297,7 @@ def scan_git_history(
         print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
         return []
 
-    findings: list[dict] = []
+    findings: list[Finding] = []
     current_commit = ''
     current_file = ''
     diff_lineno = 0

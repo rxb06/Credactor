@@ -15,6 +15,7 @@ from .redactor import _UNSAFE_REPLACEMENT_RE, fix_all, interactive_review
 from .report import json_report, print_gitignore_skipped, print_report, sarif_report
 from .scanner import scan_file
 from .suppressions import AllowList
+from .types import Finding
 from .walker import scan_git_history, scan_staged_files, select_json_files, walk_and_scan
 
 
@@ -318,7 +319,7 @@ def _main_inner(argv: list[str] | None = None) -> None:
               'NFS/SMB. Use --dry-run first.', file=sys.stderr)
 
     # --- Dispatch based on mode ---
-    findings: list[dict] = []
+    findings: list[Finding] = []
     errored_files: list[str] = []
 
     if config.staged_only:
@@ -438,7 +439,7 @@ def _main_inner(argv: list[str] | None = None) -> None:
 
     if config.fix_all:
         # Confirmation before destructive batch operation
-        by_file: dict[str, list] = {}
+        by_file: dict[str, list[Finding]] = {}
         for f in findings:
             by_file.setdefault(f['file'], []).append(f)
         print(f'\n  --fix-all will modify {len(by_file)} file(s) '

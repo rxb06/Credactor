@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from .config import Config
+from .types import Finding
 from .utils import detect_encoding, sanitize_for_terminal
 
 # SEC-10: Pattern for dangerous characters in replacement strings that could
@@ -26,7 +27,7 @@ _UNSAFE_REPLACEMENT_RE = re.compile(
 # Replacement value generation (#5, #30)
 # ---------------------------------------------------------------------------
 def _make_replacement(
-    finding: dict,
+    finding: Finding,
     config: Config,
     filepath: str,
 ) -> str:
@@ -52,7 +53,7 @@ def _make_replacement(
     return config.custom_replacement
 
 
-def _derive_env_var_name(finding: dict) -> str:
+def _derive_env_var_name(finding: Finding) -> str:
     """Extract a reasonable env var name from the finding type."""
     ftype = finding.get('type', '')
     # variable:api_key -> API_KEY
@@ -188,7 +189,7 @@ def _secure_delete(filepath: str) -> None:
 # ---------------------------------------------------------------------------
 def batch_replace_in_file(
     filepath: str,
-    file_findings: list[dict],
+    file_findings: list[Finding],
     config: Config,
 ) -> tuple[int, int]:
     """Replace all findings in a single file in one read-modify-write pass.
@@ -318,7 +319,7 @@ def batch_replace_in_file(
 
 def replace_single(
     filepath: str,
-    finding: dict,
+    finding: Finding,
     config: Config,
 ) -> bool:
     """Replace a single finding. Used in interactive mode.
@@ -333,7 +334,7 @@ def replace_single(
 # Interactive review
 # ---------------------------------------------------------------------------
 def interactive_review(
-    findings: list[dict],
+    findings: list[Finding],
     root: str,
     config: Config,
 ) -> int:
@@ -408,7 +409,7 @@ def interactive_review(
 
 
 def fix_all(
-    findings: list[dict],
+    findings: list[Finding],
     root: str,
     config: Config,
 ) -> int:
@@ -417,7 +418,7 @@ def fix_all(
     Returns the number of unresolved findings.
     """
     # Group by file for batch replacement
-    by_file: dict[str, list[dict]] = {}
+    by_file: dict[str, list[Finding]] = {}
     for f in findings:
         by_file.setdefault(f['file'], []).append(f)
 

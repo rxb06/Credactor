@@ -46,6 +46,24 @@ class Config:
     from_trufflehog: str | None = None
     backup_warn_shown: bool = False
 
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.entropy_threshold <= 6.0:
+            raise ValueError(
+                f'entropy_threshold must be in [0.0, 6.0], '
+                f'got {self.entropy_threshold}')
+        if not 1 <= self.min_value_length <= 200:
+            raise ValueError(
+                f'min_value_length must be in [1, 200], '
+                f'got {self.min_value_length}')
+        if self.replace_mode not in ('sentinel', 'env', 'custom'):
+            raise ValueError(
+                f'replace_mode must be sentinel|env|custom, '
+                f'got {self.replace_mode!r}')
+        if self.output_format not in ('text', 'json', 'sarif'):
+            raise ValueError(
+                f'output_format must be text|json|sarif, '
+                f'got {self.output_format!r}')
+
 
 def _find_project_root(start: Path) -> Path | None:
     """SEC-02: Walk up from *start* looking for a ``.git`` directory.

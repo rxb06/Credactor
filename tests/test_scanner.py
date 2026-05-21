@@ -20,6 +20,17 @@ class TestTruePositives:
         assert len(findings) >= 1
         assert any('AWS' in f['type'] or 'variable' in f['type'] for f in findings)
 
+    def test_scan_line_finding_shape(self, config):
+        """Every Finding must carry the full canonical key set."""
+        # credactor:ignore
+        findings = scan_line(1, 'aws_key = "AKIA' + 'IOSFODNN7EXAMPLE"',
+                             'test.py', config=config)
+        required = {'file', 'line', 'type', 'severity',
+                    'full_value', 'value_preview', 'raw'}
+        for f in findings:
+            missing = required - set(f.keys())
+            assert not missing, f'Finding missing keys: {missing}'
+
     def test_jwt_token(self, config):
         # credactor:ignore
         jwt = ('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
