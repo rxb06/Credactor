@@ -145,6 +145,7 @@ def sarif_report(findings: list[dict], root: str) -> str:
     root_path = Path(root).resolve()
 
     rules: dict[str, dict] = {}
+    rule_index: dict[str, int] = {}
     results = []
 
     for f in findings:
@@ -154,6 +155,7 @@ def sarif_report(findings: list[dict], root: str) -> str:
         safe_type = html.escape(f['type'])
         rule_id = safe_type.replace(':', '-')
         if rule_id not in rules:
+            rule_index[rule_id] = len(rules)
             rules[rule_id] = {
                 'id': rule_id,
                 'shortDescription': {'text': safe_type},
@@ -190,7 +192,7 @@ def sarif_report(findings: list[dict], root: str) -> str:
 
         results.append({
             'ruleId': rule_id,
-            'ruleIndex': list(rules.keys()).index(rule_id),
+            'ruleIndex': rule_index[rule_id],
             'level': _sarif_level(f.get('severity', 'medium')),
             'message': {
                 'text': (
@@ -226,14 +228,17 @@ def sarif_report(findings: list[dict], root: str) -> str:
     return json.dumps(sarif, indent=2)
 
 
+_SARIF_LEVELS = {
+    'critical': 'error',
+    'high':     'error',
+    'medium':   'warning',
+    'low':      'note',
+}
+
+
 def _sarif_level(severity: str) -> str:
     """Map our severity to SARIF level."""
-    return {
-        'critical': 'error',
-        'high':     'error',
-        'medium':   'warning',
-        'low':      'note',
-    }.get(severity, 'warning')
+    return _SARIF_LEVELS.get(severity, 'warning')
 
 
 # ---------------------------------------------------------------------------

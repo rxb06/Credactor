@@ -18,6 +18,26 @@ from .suppressions import AllowList
 from .walker import scan_git_history, scan_staged_files, select_json_files, walk_and_scan
 
 
+# Guard against scanning system/sensitive directories — an exact match against
+# the resolved scan target rejects requests to scan well-known system roots.
+# fmt: off
+_PROTECTED_DIRS: frozenset[str] = frozenset({
+    # --- Linux / macOS ---
+    '/', '/etc', '/usr', '/var', '/boot', '/sys', '/proc',
+    '/bin', '/sbin', '/lib', '/opt', '/root',
+    '/home', '/tmp', '/var/tmp',
+    '/dev', '/run', '/mnt', '/media', '/snap', '/srv',
+    # --- macOS-specific ---
+    '/System', '/Library', '/Applications', '/private',
+    '/Volumes',
+    # --- Windows ---
+    'C:\\', 'C:\\Windows', 'C:\\Windows\\System32',
+    'C:\\Program Files', 'C:\\Program Files (x86)',
+    'C:\\ProgramData', 'C:\\Users',
+})
+# fmt: on
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='credactor',
@@ -248,24 +268,11 @@ def _main_inner(argv: list[str] | None = None) -> None:
         print(f'Error: path not found: {target}', file=sys.stderr)
         sys.exit(2)
 
-    # Guard against scanning system/sensitive directories
-    # fmt: off
-    _PROTECTED_DIRS = {
-        # --- Linux / macOS ---
-        '/', '/etc', '/usr', '/var', '/boot', '/sys', '/proc',
-        '/bin', '/sbin', '/lib', '/opt', '/root',
-        '/home', '/tmp', '/var/tmp',
-        '/dev', '/run', '/mnt', '/media', '/snap', '/srv',
-        # --- macOS-specific ---
-        '/System', '/Library', '/Applications', '/private',
-        '/Volumes',
-        # --- Windows ---
-        'C:\\', 'C:\\Windows', 'C:\\Windows\\System32',
-        'C:\\Program Files', 'C:\\Program Files (x86)',
-        'C:\\ProgramData', 'C:\\Users',
-    }
-    # fmt: on
-    resolved = str(Path(target).resolve())
+    # Resolve once and reuse — used for protected-dir check, banner,
+    # and network-mount detection below.
+    target_resolved_path = Path(target).resolve()
+    resolved = str(target_resolved_path)
+
     # Block system directories
     # On Windows, also block any drive root (e.g. D:\, F:\) not just C:\
     if (
@@ -298,16 +305,14 @@ def _main_inner(argv: list[str] | None = None) -> None:
     allowlist = AllowList(target)
 
     # Warning banner — remind user to scan project directories only
-    _resolved_path = Path(target).resolve()
-    print(f'Scanning: {_resolved_path}', file=sys.stderr)
+    print(f'Scanning: {target_resolved_path}', file=sys.stderr)
     print('  Note: Credactor scans forward (into subdirectories) only.',
           file=sys.stderr)
     print('  For best results, point it at your project root directory.',
           file=sys.stderr)
 
     # SEC-17: Warn if target appears to be on a network mount
-    _resolved_str = str(_resolved_path)
-    if _resolved_str.startswith(('/mnt/', '/media/', '/Volumes/', '/net/')):
+    if resolved.startswith(('/mnt/', '/media/', '/Volumes/', '/net/')):
         print('[WARN] Target appears to be on a mounted/network volume. '
               'Atomic file operations (os.replace) may not be reliable on '
               'NFS/SMB. Use --dry-run first.', file=sys.stderr)

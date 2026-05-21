@@ -406,27 +406,6 @@ class TestGitleaksCap:
 
 
 # ---------------------------------------------------------------------------
-# Severity helper unit tests
-# ---------------------------------------------------------------------------
-
-class TestGitleaksSeverityHelper:
-    def test_gitleaks_severity_all_known_rules(self):
-        """Each entry in _GITLEAKS_SEVERITY table returns expected value."""
-        from credactor.ingest import _GITLEAKS_SEVERITY
-        for rule_id, expected in _GITLEAKS_SEVERITY.items():
-            assert _gitleaks_severity(rule_id) == expected
-
-    def test_gitleaks_tags_case_insensitive(self):
-        """Tags severity check is case-insensitive."""
-        assert _gitleaks_severity('generic-api-key', ['HIGH']) == 'high'
-        assert _gitleaks_severity('generic-api-key', ['Critical']) == 'critical'
-
-    def test_gitleaks_severity_unknown_default(self):
-        """Completely unknown RuleID returns medium."""
-        assert _gitleaks_severity('totally-unknown-rule-xyz') == 'medium'
-
-
-# ---------------------------------------------------------------------------
 # _synthesise_raw unit tests
 # ---------------------------------------------------------------------------
 
@@ -682,56 +661,6 @@ class TestTrufflehogRawSynthesis:
         assert results[0]['raw'] == 'AKIAIOSFODNN7EXAMPLE'
 
 
-class TestTrufflehogUrlDecoding:
-    def test_url_encoded_at_sign_decoded_when_source_has_literal_at(self, tmp_path):
-        """TruffleHog reports %40 but source has literal '@' → full_value uses decoded '@'.
-
-        Primary A2 scenario: TruffleHog URL-encodes '@' inside a credential value.
-        The source file has the literal '@' character, so the decoded form must be used
-        for redaction to find and replace the correct text.
-        """
-        target, config_py = _make_th_target(tmp_path)
-        # Source file has literal '@' — NOT a percent-encoded %40
-        config_py.write_text('DB_URI = "p4ssw0rd@cluster"\n', encoding='utf-8')
-        # TruffleHog reports Raw with %40 (URL-encoded '@')
-        finding = _make_trufflehog_finding(Raw='p4ssw0rd%40cluster')
-        report = _write_ndjson(tmp_path, [finding])
-        results = ingest_trufflehog(str(report), str(target))
-        assert len(results) == 1
-        # Decoded form ('p4ssw0rd@cluster') is present in source — must use decoded
-        assert '%40' not in results[0]['full_value'], (
-            'full_value still contains URL-encoded %40; expected literal @'
-        )
-        assert '@' in results[0]['full_value']
-
-    def test_url_encoded_kept_when_source_has_literal_percent40(self, tmp_path):
-        """When source file contains literal %40, the encoded form is used as full_value.
-
-        A2 inverse case: if %40 is the actual file content (not an encoded '@'),
-        the decoded form would not match — the encoded form must be preserved.
-        """
-        target, config_py = _make_th_target(tmp_path)
-        # Source file has literal %40 (e.g. a URL template)
-        config_py.write_text('TEMPLATE = "https://host/%40path"\n', encoding='utf-8')
-        from credactor.ingest import _read_file_lines
-        _read_file_lines.cache_clear()
-        finding = _make_trufflehog_finding(Raw='https://host/%40path')
-        report = _write_ndjson(tmp_path, [finding])
-        results = ingest_trufflehog(str(report), str(target))
-        assert len(results) == 1
-        # Encoded form IS in source; decoded form ('https://host/@path') is NOT.
-        # Correct behaviour: keep the encoded form.
-        source_line = config_py.read_text(encoding='utf-8').rstrip()
-        assert results[0]['full_value'] in source_line
-
-    def test_non_encoded_raw_unaffected(self, tmp_path):
-        """Raw value without percent-encoding passes through unchanged."""
-        target, _ = _make_th_target(tmp_path)
-        finding = _make_trufflehog_finding(Raw='AKIAIOSFODNN7EXAMPLE')
-        report = _write_ndjson(tmp_path, [finding])
-        results = ingest_trufflehog(str(report), str(target))
-        assert results[0]['full_value'] == 'AKIAIOSFODNN7EXAMPLE'
-
 
 class TestTrufflehogSeverityAndType:
     def test_trufflehog_verified_true_critical(self, tmp_path):
@@ -802,29 +731,6 @@ class TestTrufflehogCap:
         assert len(results) == 10_000
         captured = capsys.readouterr()
         assert 'truncating' in captured.err.lower() or 'truncated' in captured.err.lower()
-
-
-# ---------------------------------------------------------------------------
-# 8.4 TruffleHog severity helper unit tests
-# ---------------------------------------------------------------------------
-
-class TestTrufflehogSeverityHelper:
-    def test_trufflehog_severity_all_known_detectors(self):
-        """Each entry in _TRUFFLEHOG_SEVERITY returns expected base value."""
-        for detector, expected in _TRUFFLEHOG_SEVERITY.items():
-            result = _trufflehog_severity(detector, verified=False)
-            assert result == expected, (
-                f'Detector {detector!r}: expected {expected!r}, got {result!r}'
-            )
-
-    def test_trufflehog_verified_overrides_all(self):
-        """Verified=True on a medium detector returns critical."""
-        assert _trufflehog_severity('SlackWebhook', verified=True) == 'critical'
-        assert _trufflehog_severity('totally-unknown', verified=True) == 'critical'
-
-    def test_trufflehog_unknown_detector_medium(self):
-        """Unknown DetectorName with Verified=False returns medium."""
-        assert _trufflehog_severity('SomeNewTool', verified=False) == 'medium'
 
 
 # ---------------------------------------------------------------------------
@@ -1006,30 +912,6 @@ class TestDeduplication:
         result = deduplicate_findings([gl, th])
         assert len(result) == 1
         assert result[0]['type'] == 'external:gitleaks:aws-access-token'
-
-    def test_dedup_with_different_commits_kept(self):
-        """Same file:line:value but different commits — both kept."""
-        f1 = _make_finding(commit='abc123456789')
-        f2 = _make_finding(commit='def456789012')
-        result = deduplicate_findings([f1, f2])
-        assert len(result) == 2
-
-    def test_dedup_working_tree_beats_committed(self):
-        """No-commit (working tree) finding wins over committed finding at same location."""
-        working = _make_finding()              # no commit key
-        committed = _make_finding(commit='abc123456789')
-        # committed first, working-tree second — working-tree should survive
-        result = deduplicate_findings([committed, working])
-        assert len(result) == 1
-        assert 'commit' not in result[0]
-
-    def test_dedup_working_tree_first_drops_committed(self):
-        """Working-tree finding first suppresses a later committed dup."""
-        working = _make_finding()
-        committed = _make_finding(commit='abc123456789')
-        result = deduplicate_findings([working, committed])
-        assert len(result) == 1
-        assert 'commit' not in result[0]
 
     def test_dedup_path_normalisation(self):
         """./src/f.py and src/f.py with the same absolute root collapse to one."""

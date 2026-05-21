@@ -11,9 +11,9 @@ from pathlib import Path
 from .patterns import SKIP_DIRS
 
 
-def load_gitignore_patterns(root: str) -> list[tuple[str, str]]:
+def load_gitignore_patterns(root: str) -> list[tuple[str, Path]]:
     """Walk *root* and collect ``(pattern, base_dir)`` from every ``.gitignore``."""
-    patterns: list[tuple[str, str]] = []
+    patterns: list[tuple[str, Path]] = []
     root_path = Path(root).resolve()
 
     for dirpath, dirnames, filenames in os.walk(root_path):
@@ -26,20 +26,19 @@ def load_gitignore_patterns(root: str) -> list[tuple[str, str]]:
                         stripped = line.strip()
                         if not stripped or stripped.startswith('#') or stripped.startswith('!'):
                             continue
-                        patterns.append((stripped, dirpath))
-            except (OSError, PermissionError):
+                        patterns.append((stripped, Path(dirpath).resolve()))
+            except OSError:
                 pass
 
     return patterns
 
 
-def matches_gitignore(filepath: str, patterns: list[tuple[str, str]]) -> bool:
+def matches_gitignore(filepath: str, patterns: list[tuple[str, str | Path]]) -> bool:
     """Return True if *filepath* is covered by any collected ``.gitignore`` pattern."""
     file_path = Path(filepath).resolve()
 
     for pattern, base_dir in patterns:
-        base_path = Path(base_dir).resolve()
-
+        base_path = base_dir if isinstance(base_dir, Path) else Path(base_dir).resolve()
         try:
             rel = file_path.relative_to(base_path)
         except ValueError:

@@ -20,8 +20,6 @@ _UNSAFE_REPLACEMENT_RE = re.compile(
     r'[`$\\;|&]|__import__|eval\s*\(|exec\s*\(|system\s*\(|subprocess'
 )
 
-# SEC-28: Track whether plaintext backup warning has been shown this run
-_backup_warned = False
 
 
 # ---------------------------------------------------------------------------
@@ -35,13 +33,12 @@ def _make_replacement(
     """Produce the replacement string for a credential finding.
 
     Modes (config.replace_mode):
-      - 'sentinel':  REDACTED_BY_CREDACTOR  (or config.custom_replacement)
-      - 'env':       os.environ["VAR_NAME"]  (Python-style env var reference)
-      - 'custom':    config.custom_replacement
+      - 'env':                 language-aware env var reference
+                               (e.g. os.environ["VAR_NAME"]).
+      - 'sentinel' / 'custom': returns config.custom_replacement
+                               (default 'REDACTED_BY_CREDACTOR').
     """
-    mode = config.replace_mode
-
-    if mode == 'env':
+    if config.replace_mode == 'env':
         # Derive env var name from the variable name in the finding
         var_name = _derive_env_var_name(finding)
         ext = Path(filepath).suffix.lower()
@@ -52,10 +49,6 @@ def _make_replacement(
             return 'REDACTED_BY_CREDACTOR'
         return _env_ref_for_language(var_name, ext)
 
-    if mode == 'custom':
-        return config.custom_replacement
-
-    # Default sentinel
     return config.custom_replacement
 
 
@@ -131,7 +124,7 @@ def _create_backup(filepath: str, config: Config) -> str | None:
         shutil.copy2(filepath, tmp_bak)
         os.replace(tmp_bak, bak)
         tmp_bak = None  # rename succeeded
-    except (OSError, PermissionError) as exc:
+    except OSError as exc:
         print(f'  [WARN] Could not create backup {bak}: {exc}', file=sys.stderr)
         if tmp_bak is not None:
             try:
@@ -141,13 +134,12 @@ def _create_backup(filepath: str, config: Config) -> str | None:
         return None
 
     # SEC-28: Warn once about plaintext backups when not using secure options
-    global _backup_warned
-    if not _backup_warned and not config.secure_delete and not config.secure_backup_dir:
+    if not config.backup_warn_shown and not config.secure_delete and not config.secure_backup_dir:
         print('  [WARN] Plaintext backup created beside original file.',
               file=sys.stderr)
         print('    Use --secure-delete to auto-wipe, --secure-backup-dir to store '
               'outside repo, or --no-backup to skip.', file=sys.stderr)
-        _backup_warned = True
+        config.backup_warn_shown = True
 
     # SEC-01: Move backup to secure directory if configured
     if config.secure_backup_dir:
@@ -170,7 +162,7 @@ def _create_backup(filepath: str, config: Config) -> str | None:
             dest = str(dest_dir / Path(bak).name)
             shutil.move(bak, dest)
             return dest
-        except (OSError, PermissionError) as exc:
+        except OSError as exc:
             print(f'  [WARN] Could not move backup to {dest_dir}: {exc}',
                   file=sys.stderr)
             # Fall through — backup still exists at original location
@@ -186,7 +178,7 @@ def _secure_delete(filepath: str) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.unlink(filepath)
-    except (OSError, PermissionError) as exc:
+    except OSError as exc:
         print(f'  [WARN] Secure delete failed for {filepath}: {exc}',
               file=sys.stderr)
 
@@ -242,7 +234,7 @@ def batch_replace_in_file(
     try:
         with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
             lines = fh.readlines()
-    except (OSError, PermissionError) as exc:
+    except OSError as exc:
         print(f'  [ERROR] Cannot read {filepath}: {exc}', file=sys.stderr)
         if lock_fh:
             lock_fh.close()
@@ -295,7 +287,7 @@ def batch_replace_in_file(
             fh.writelines(lines)
         os.replace(tmp_path, filepath)
         tmp_path = None  # rename succeeded — nothing to clean up
-    except (OSError, PermissionError) as exc:
+    except OSError as exc:
         print(f'  [ERROR] Cannot write {filepath}: {exc}', file=sys.stderr)
         return 0, len(file_findings)
     finally:

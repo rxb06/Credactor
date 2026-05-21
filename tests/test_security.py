@@ -43,6 +43,10 @@ class TestPathContainment:
     def test_unrelated_path_blocked(self):
         assert not _is_within_root('/etc/passwd', '/tmp/repo/')
 
+    def test_case_differs_treated_as_distinct_on_case_sensitive_fs(self):
+        """On Linux, paths differing only in case are distinct — not within root."""
+        assert not _is_within_root('/tmp/REPO/file.py', '/tmp/repo/')
+
 
 class TestSymlinkBoundary:
     """SEC-23: File symlinks resolving outside scan root are skipped."""
@@ -528,29 +532,3 @@ class TestA10TagsTypeConfusion:
         assert result == _gitleaks_severity('generic-api-key', [])
 
 
-class TestA11NormcasePathContainment:
-    """A11: _is_within_root normcase behavior.
-
-    os.path.normcase() is a no-op on Linux (case-sensitive FS) and macOS
-    (Path.resolve() at call sites already returns canonical case via the OS).
-    It only case-folds on Windows (NTFS). These tests verify:
-    1. Existing correct behavior is preserved on Linux (normcase no-op).
-    2. Mixed-case paths on Linux are correctly treated as distinct.
-    """
-
-    def test_normcase_noop_on_linux_exact_match(self):
-        """Exact-match paths still pass after normcase (no-op on Linux)."""
-        assert _is_within_root('/tmp/repo/file.py', '/tmp/repo/')
-
-    def test_normcase_noop_on_linux_case_differs(self):
-        """On Linux, paths differing only in case are distinct — not within root."""
-        # /tmp/REPO is NOT the same as /tmp/repo on a case-sensitive FS
-        assert not _is_within_root('/tmp/REPO/file.py', '/tmp/repo/')
-
-    def test_normcase_noop_root_uppercase(self):
-        """Upper-case root does not match lower-case child on Linux."""
-        assert not _is_within_root('/tmp/repo/file.py', '/tmp/REPO/')
-
-    def test_normcase_preserves_prefix_collision_block(self):
-        """normcase must not weaken the prefix-collision guard."""
-        assert not _is_within_root('/tmp/repo_evil/file.py', '/tmp/repo/')

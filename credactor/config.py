@@ -8,7 +8,6 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -42,9 +41,10 @@ class Config:
     custom_replacement: str = 'REDACTED_BY_CREDACTOR'
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'
     target: str = '.'
-    config_path: Optional[str] = None
-    from_gitleaks: Optional[str] = None
-    from_trufflehog: Optional[str] = None
+    config_path: str | None = None
+    from_gitleaks: str | None = None
+    from_trufflehog: str | None = None
+    backup_warn_shown: bool = False
 
 
 def _find_project_root(start: Path) -> Path | None:
@@ -64,7 +64,7 @@ def _find_project_root(start: Path) -> Path | None:
 
 def load_config_file(
     root: str,
-    explicit_path: Optional[str] = None,
+    explicit_path: str | None = None,
     ci_mode: bool = False,
 ) -> dict:
     """Load a .credactor.toml config file and return the raw dict.
@@ -132,57 +132,18 @@ def load_config_file(
 
 
 def _parse_toml(path: Path) -> dict:
-    """Parse a TOML file. Uses tomllib (3.11+) or tomli as fallback."""
+    """Parse a TOML file using stdlib tomllib (Python 3.11+)."""
+    import tomllib
     try:
-        if sys.version_info >= (3, 11):
-            import tomllib
-            with open(path, 'rb') as fh:
-                return tomllib.load(fh)
-        else:
-            try:
-                import tomli
-                with open(path, 'rb') as fh:
-                    return tomli.load(fh)
-            except ImportError:
-                # Fall back to very basic key=value parsing for simple configs
-                return _basic_toml_parse(path)
-    except (OSError, PermissionError) as exc:
+        with open(path, 'rb') as fh:
+            return tomllib.load(fh)
+    except OSError as exc:
         # SEC-03: Surface config read failures instead of silently ignoring
         print(f'[WARN] Could not read config {path}: {exc}', file=sys.stderr)
         return {}
-
-
-def _basic_toml_parse(path: Path) -> dict:
-    """Minimal TOML-like parser for key = value pairs (no nested tables)."""
-    result: dict = {}
-    try:
-        with open(path, encoding='utf-8') as fh:
-            for line in fh:
-                stripped = line.strip()
-                if not stripped or stripped.startswith('#') or stripped.startswith('['):
-                    continue
-                if '=' not in stripped:
-                    continue
-                key, _, val = stripped.partition('=')
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                # Try to parse as list
-                if val.startswith('[') and val.endswith(']'):
-                    items = val[1:-1].split(',')
-                    result[key] = [i.strip().strip('"').strip("'") for i in items if i.strip()]
-                elif val.lower() in ('true', 'false'):
-                    result[key] = val.lower() == 'true'
-                elif val.isdigit():
-                    result[key] = int(val)
-                else:
-                    try:
-                        result[key] = float(val)
-                    except ValueError:
-                        result[key] = val
-    except (OSError, PermissionError) as exc:
-        # SEC-03: Surface config read failures instead of silently ignoring
-        print(f'[WARN] Could not read config {path}: {exc}', file=sys.stderr)
-    return result
+    except tomllib.TOMLDecodeError as exc:
+        print(f'[WARN] Invalid TOML in {path}: {exc}', file=sys.stderr)
+        return {}
 
 
 def apply_config_file(config: Config, file_data: dict) -> None:
@@ -225,3 +186,22 @@ def apply_config_file(config: Config, file_data: dict) -> None:
         config.extra_safe_values.update(v.lower() for v in file_data['extra_safe_values'])
     if 'replacement' in file_data:
         config.custom_replacement = str(file_data['replacement'])
+    ingest = file_data.get('ingest', {})
+    if not isinstance(ingest, dict):
+        print('[WARN] [ingest] config section must be a table, ignoring',
+              file=sys.stderr)
+    else:
+        if 'from_gitleaks' in ingest:
+            val = ingest['from_gitleaks']
+            if not isinstance(val, str):
+                print('[WARN] ingest.from_gitleaks must be a string path, ignoring',
+                      file=sys.stderr)
+            else:
+                config.from_gitleaks = val
+        if 'from_trufflehog' in ingest:
+            val = ingest['from_trufflehog']
+            if not isinstance(val, str):
+                print('[WARN] ingest.from_trufflehog must be a string path, ignoring',
+                      file=sys.stderr)
+            else:
+                config.from_trufflehog = val

@@ -5,6 +5,7 @@ Addresses: #16 (encoding detection), #28 (optimized entropy)
 """
 
 import math
+import re
 from collections import Counter
 
 
@@ -25,7 +26,7 @@ def detect_encoding(filepath: str) -> str:
     try:
         with open(filepath, 'rb') as fh:
             raw = fh.read(8192)
-    except (OSError, PermissionError):
+    except OSError:
         return 'utf-8'
 
     if not raw:
@@ -71,13 +72,11 @@ def mask_secret(value: str, visible: int = 4) -> str:
 _CONTROL_CHAR_TABLE = str.maketrans(
     {c: '?' for c in range(32) if c not in (9, 10, 13)}  # keep tab, LF, CR
 )
+_ANSI_ESC_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 
 def sanitize_for_terminal(s: str) -> str:
     """SEC-16: Strip ANSI escape sequences and control characters from a string
     to prevent terminal injection attacks via crafted filenames or values."""
-    import re
-    # Remove ANSI escape sequences
-    s = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', s)
-    # Replace remaining control characters with '?'
+    s = _ANSI_ESC_RE.sub('', s)
     return s.translate(_CONTROL_CHAR_TABLE)

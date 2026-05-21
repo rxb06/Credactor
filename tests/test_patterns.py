@@ -185,6 +185,15 @@ class TestDynamicLookup:
     def test_matches(self, line):
         assert DYNAMIC_LOOKUP_RE.search(line)
 
+    @pytest.mark.parametrize('line', [
+        'api_key = "hardcoded_secret_value"',
+        'secret = "AKIAIOSFODNN7EXAMPLE"',
+        'password = "p4$$w0rd!"',
+        'just_a_string',
+    ])
+    def test_no_match(self, line):
+        assert not DYNAMIC_LOOKUP_RE.search(line)
+
 
 # ---------------------------------------------------------------------------
 # Inline suppression (#3)

@@ -69,6 +69,16 @@ class TestLoadConfigFile:
         result = load_config_file(tmp_dir, '/nonexistent/.credactor.toml')
         assert result == {}
 
+    def test_load_config_ingest_section(self, tmp_dir):
+        config_path = os.path.join(tmp_dir, '.credactor.toml')
+        with open(config_path, 'w') as f:
+            f.write('[ingest]\n')
+            f.write('from_gitleaks = "/tmp/r.json"\n')
+        file_data = load_config_file(tmp_dir)
+        c = Config()
+        apply_config_file(c, file_data)
+        assert c.from_gitleaks == '/tmp/r.json'
+
 
 class TestApplyConfigFile:
     def test_apply_threshold(self):
@@ -117,3 +127,45 @@ class TestApplyConfigFile:
         apply_config_file(c, {'skip_dirs': ['new_dir']})
         assert 'existing' in c.skip_dirs
         assert 'new_dir' in c.skip_dirs
+
+    def test_apply_ingest_from_gitleaks(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_gitleaks': '/tmp/r.json'}})
+        assert c.from_gitleaks == '/tmp/r.json'
+
+    def test_apply_ingest_from_trufflehog(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_trufflehog': '/tmp/r.jsonl'}})
+        assert c.from_trufflehog == '/tmp/r.jsonl'
+
+    def test_apply_ingest_both_keys(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_gitleaks': '/tmp/g.json', 'from_trufflehog': '/tmp/t.jsonl'}})
+        assert c.from_gitleaks == '/tmp/g.json'
+        assert c.from_trufflehog == '/tmp/t.jsonl'
+
+    def test_apply_ingest_non_string_warns(self, capsys):
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_gitleaks': 42}})
+        assert c.from_gitleaks is None
+        captured = capsys.readouterr()
+        assert '[WARN]' in captured.err
+
+    def test_apply_ingest_non_dict_warns(self, capsys):
+        c = Config()
+        apply_config_file(c, {'ingest': 'not-a-table'})
+        assert c.from_gitleaks is None
+        assert c.from_trufflehog is None
+        captured = capsys.readouterr()
+        assert '[WARN]' in captured.err
+
+    def test_apply_ingest_empty_section(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {}})
+        assert c.from_gitleaks is None
+        assert c.from_trufflehog is None
+
+    def test_apply_unknown_ingest_keys_ignored(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {'unknown_key': 'x'}})
+        assert not hasattr(c, 'unknown_key')

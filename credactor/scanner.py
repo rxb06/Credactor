@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .config import Config
 from .patterns import (
@@ -64,6 +63,11 @@ _PLACEHOLDER_WORDS = {
     'fixme', 'example', 'sample', 'default', 'enter',
 }
 
+# Strong single-word indicators that never appear in real credentials
+_STRONG_PLACEHOLDER_WORDS = frozenset({
+    'changeme', 'placeholder', 'replace', 'fixme', 'todo', 'change', 'insert',
+})
+
 # Hash/encrypted value prefixes — these store derived values, not raw secrets
 _HASH_PREFIX_RE = re.compile(
     r'^\$(?:2[aby]\$|argon2[id]{0,2}\$|scrypt\$|pbkdf2)',
@@ -85,6 +89,10 @@ _HASH_CONTEXT_RE = re.compile(
     r'(?:_hash|_hashed|_digest|_checksum|_fingerprint|_hmac|sha\d+|md5)\s*[:=]',
     re.IGNORECASE,
 )
+
+
+def _preview(val: str, n: int = 60) -> str:
+    return val[:n] + ('...' if len(val) > n else '')
 
 
 def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
@@ -160,7 +168,7 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if len(matches) >= 2:
         return True
     # Strong single-word indicators (never appear in real credentials)
-    if matches & {'changeme', 'placeholder', 'replace', 'fixme', 'todo', 'change', 'insert'}:
+    if matches & _STRONG_PLACEHOLDER_WORDS:
         return True
 
     # Hashed/encrypted values: bcrypt, argon2, scrypt prefixes
@@ -187,8 +195,8 @@ def scan_line(
     line: str,
     filepath: str,
     *,
-    config: Optional[Config] = None,
-    allowlist: Optional[AllowList] = None,
+    config: Config | None = None,
+    allowlist: AllowList | None = None,
 ) -> list[dict]:
     """Analyse a single line and return a list of credential findings."""
     findings: list[dict] = []
@@ -261,7 +269,7 @@ def scan_line(
                     'type':          f'pattern:{label}',
                     'severity':      severity,
                     'full_value':    val,
-                    'value_preview': val[:60] + ('...' if len(val) > 60 else ''),
+                    'value_preview': _preview(val),
                     'raw':           line.rstrip(),
                 })
             if findings:
@@ -292,7 +300,7 @@ def scan_line(
                 'type':          f'xml-attr:{xml_key}',
                 'severity':      _severity_for_variable(xml_key),
                 'full_value':    xml_val,
-                'value_preview': xml_val[:60] + ('...' if len(xml_val) > 60 else ''),
+                'value_preview': _preview(xml_val),
                 'raw':           line.rstrip(),
             })
         if findings:
@@ -304,8 +312,7 @@ def scan_line(
     if is_comment and any(kw in stripped for kw in ('def ', 'async def ', 'class ')):
         return findings
 
-    code_start = stripped.lstrip()
-    if code_start.startswith(('def ', 'async def ', 'class ')):
+    if stripped.startswith(('def ', 'async def ', 'class ')):
         return findings
 
     if DYNAMIC_LOOKUP_RE.search(line):
@@ -344,7 +351,7 @@ def scan_line(
             'type':          f'variable:{var}',
             'severity':      _severity_for_variable(var),
             'full_value':    val_stripped,
-            'value_preview': val_stripped[:60] + ('...' if len(val_stripped) > 60 else ''),
+            'value_preview': _preview(val_stripped),
             'raw':           line.rstrip(),
         })
 
@@ -354,8 +361,8 @@ def scan_line(
 def scan_file(
     filepath: str,
     *,
-    config: Optional[Config] = None,
-    allowlist: Optional[AllowList] = None,
+    config: Config | None = None,
+    allowlist: AllowList | None = None,
 ) -> list[dict]:
     """Scan a single file for credential findings.
     """
@@ -379,7 +386,7 @@ def scan_file(
     try:
         with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
             lines = fh.readlines()
-    except (OSError, PermissionError) as exc:
+    except OSError as exc:
         print(f'[WARN] Cannot read {filepath}: {exc}', file=sys.stderr)
         return findings
 
@@ -405,7 +412,7 @@ def scan_file(
                 'type':          'pattern:private key block',
                 'severity':      'critical',
                 'full_value':    line.strip(),
-                'value_preview': line.strip()[:60],
+                'value_preview': _preview(line.strip()),
                 'raw':           line.rstrip(),
             })
         elif in_pem_block and '-----END' in line and 'PRIVATE KEY' in line:
@@ -438,8 +445,8 @@ def _scan_multiline_strings(
     filepath: str,
     lines: list[str],
     existing_findings: list[dict],
-    config: Optional[Config],
-    allowlist: Optional[AllowList],
+    config: Config | None,
+    allowlist: AllowList | None,
 ) -> None:
     """Detect credentials inside triple-quoted strings and JS template literals.
     This is a best-effort heuristic: it concatenates the contents of multi-line
@@ -494,7 +501,7 @@ def _scan_multiline_strings(
                         'type':          f'multiline:{label}',
                         'severity':      severity,
                         'full_value':    val,
-                        'value_preview': val[:60] + ('...' if len(val) > 60 else ''),
+                        'value_preview': _preview(val),
                         'raw':           block.replace('\n', '\\n')[:120],
                     })
                     break  # one finding per block is enough

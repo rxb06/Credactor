@@ -27,60 +27,70 @@ class TestTruePositives:
                '.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U')
         findings = scan_line(1, f'token = "{jwt}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('JWT token' in f['type'] for f in findings)
 
     def test_high_entropy_password(self, config):
         # credactor:ignore
         pwd = 'xK9#mL2' + '$vQ7@nR5pZ3'
         findings = scan_line(1, f'password = "{pwd}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('variable:' in f['type'] for f in findings)
 
     def test_github_pat(self, config):
         # credactor:ignore
         tok = 'ghp_ABCDEFGHIJ' + 'KLMNOPqrstuvwxyz123456'
         findings = scan_line(1, f'token = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('GitHub token' in f['type'] for f in findings)
 
     def test_stripe_live_key(self, config):
         # credactor:ignore
         key = 'sk_live_abcdefghij' + 'klmnopqrstuvwx'
         findings = scan_line(1, f'key = "{key}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('Stripe live key' in f['type'] for f in findings)
 
     def test_connection_string(self, config):
         # credactor:ignore
         conn = 'postgresql://admin:s3cretP' + '@ss@db.host.com:5432/mydb'
         findings = scan_line(1, f'db_url = "{conn}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('connection string' in f['type'] for f in findings)
 
     def test_slack_token(self, config):
         # credactor:ignore
         tok = 'xoxb-12345678' + '90-abcdefghij'
         findings = scan_line(1, f'bot = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('Slack token' in f['type'] for f in findings)
 
     def test_severity_is_present(self, config):
         # credactor:ignore
         key = 'AKIA' + 'IOSFODNN7EXAMPLE'
         findings = scan_line(1, f'key = "{key}"', 'test.py', config=config)
         assert all('severity' in f for f in findings)
+        assert any('AWS access key' in f['type'] for f in findings)
 
     def test_gcp_api_key(self, config):
         # credactor:ignore
         key = 'AIzaSyA12345678' + '90abcdefghijklmnopqrstuv'
         findings = scan_line(1, f'gcp_key = "{key}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('GCP API key' in f['type'] for f in findings)
 
     def test_gitlab_pat(self, config):
         # credactor:ignore
         tok = 'glpat-a1B2c3D4e5' + 'F6g7H8i9J0k1L2m3N4o5'
         findings = scan_line(1, f'token = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('GitLab token' in f['type'] for f in findings)
 
     def test_npm_token(self, config):
         # credactor:ignore
         tok = 'npm_abcdefghijklmnop' + 'qrstuvwxyz0123456789'
         findings = scan_line(1, f'token = "{tok}"', 'test.py', config=config)
         assert len(findings) >= 1
+        assert any('npm token' in f['type'] for f in findings)
 
 
 # ---------------------------------------------------------------------------

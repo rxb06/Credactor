@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING:** Minimum Python version raised to **3.11**. Python 3.10
+  support is dropped. Users on 3.10 must pin to credactor `< 3.0` or
+  upgrade Python. Rationale: 3.10 reaches end-of-life in October 2026,
+  and `tomllib` (3.11+ stdlib) replaces the previous hand-rolled TOML
+  fallback parser, preserving the project's zero-runtime-dependency
+  policy.
+
+### Removed
+
+- `credactor.config._basic_toml_parse` — replaced by stdlib `tomllib`.
+  This was a private helper; no public API impact.
+
 ## [2.3.3] - 2026-04-09
 
 ### Fixed

@@ -75,25 +75,24 @@ class AllowList:
                     else:
                         # treat as a value literal to suppress
                         self._value_literals.add(line)
-        except (OSError, PermissionError):
+        except OSError:
             pass
+
+    def _rel(self, filepath: str) -> str:
+        try:
+            return Path(filepath).resolve().relative_to(self._root).as_posix()
+        except ValueError:
+            return filepath
 
     def is_file_suppressed(self, filepath: str) -> bool:
         """Return True if the entire file is suppressed by a glob pattern."""
-        try:
-            rel = Path(filepath).resolve().relative_to(self._root).as_posix()
-        except ValueError:
-            rel = filepath
+        rel = self._rel(filepath)
         return any(fnmatch.fnmatch(rel, g) for g in self._file_globs)
 
     def is_line_suppressed(self, filepath: str, lineno: int) -> bool:
         """Return True if a specific file:line is suppressed."""
-        try:
-            rel = Path(filepath).resolve().relative_to(self._root).as_posix()
-        except ValueError:
-            rel = filepath
-        lines = self._file_line.get(rel, set())
-        return lineno in lines
+        rel = self._rel(filepath)
+        return lineno in self._file_line.get(rel, set())
 
     def is_value_suppressed(self, value: str) -> bool:
         """Return True if the value literal is in the allowlist."""
@@ -101,6 +100,7 @@ class AllowList:
 
     def is_suppressed(self, filepath: str, lineno: int, value: str) -> bool:
         """Combined check for any suppression."""
-        return (self.is_file_suppressed(filepath)
-                or self.is_line_suppressed(filepath, lineno)
-                or self.is_value_suppressed(value))
+        rel = self._rel(filepath)
+        return (any(fnmatch.fnmatch(rel, g) for g in self._file_globs)
+                or lineno in self._file_line.get(rel, set())
+                or value in self._value_literals)

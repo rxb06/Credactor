@@ -13,7 +13,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 from .config import Config
 from .gitignore import load_gitignore_patterns, matches_gitignore
@@ -59,7 +59,7 @@ def _progress_callback_factory(total: int, no_color: bool) -> Callable[[int], No
 def walk_and_scan(
     root: str,
     config: Config,
-    allowlist: Optional[AllowList] = None,
+    allowlist: AllowList | None = None,
 ) -> tuple[list[dict], list[str], list[str], list[str]]:
     """Single-pass directory walk
     Returns (findings, gitignore_skipped, json_files_available, errored_files).
@@ -131,7 +131,7 @@ def walk_and_scan(
 def _parallel_scan(
     files: list[str],
     config: Config,
-    allowlist: Optional[AllowList],
+    allowlist: AllowList | None,
 ) -> tuple[list[dict], list[str]]:
     """Scan files using a thread pool (#27).
 
@@ -168,39 +168,42 @@ def _parallel_scan(
             for fp in files
         }
         for future in as_completed(future_to_file):
-            with lock:
-                done_count += 1
-                progress(done_count)
-                try:
-                    all_findings.extend(future.result())
-                except OSError as exc:
-                    fp = future_to_file[future]
-                    # SEC-05: Detect fd exhaustion and fall back
-                    if exc.errno == errno.EMFILE:
-                        emfile_hit = True
-                        errored.append(fp)
-                        print('[WARN] Too many open files — remaining '
-                              'files will be scanned sequentially.',
-                              file=sys.stderr)
-                    else:
-                        errored.append(fp)
-                        print(f'[WARN] Error scanning {fp}: {exc}',
-                              file=sys.stderr)
-                except Exception as exc:
-                    fp = future_to_file[future]
+            fp = future_to_file[future]
+            try:
+                result = future.result()
+            except OSError as exc:
+                # SEC-05: Detect fd exhaustion and fall back
+                if exc.errno == errno.EMFILE:
+                    emfile_hit = True
+                    errored.append(fp)
+                    print('[WARN] Too many open files — remaining '
+                          'files will be scanned sequentially.',
+                          file=sys.stderr)
+                else:
                     errored.append(fp)
                     print(f'[WARN] Error scanning {fp}: {exc}',
                           file=sys.stderr)
+                result = []
+            except Exception as exc:
+                errored.append(fp)
+                print(f'[WARN] Error scanning {fp}: {exc}',
+                      file=sys.stderr)
+                result = []
+            with lock:
+                done_count += 1
+                progress(done_count)
+                all_findings.extend(result)
 
     # SEC-05: Re-scan files that failed due to fd exhaustion sequentially
     if emfile_hit:
+        recovered: set[str] = set()
         for fp in list(errored):
             try:
-                results = scan_file(fp, config=config, allowlist=allowlist)
-                all_findings.extend(results)
-                errored.remove(fp)
+                all_findings.extend(scan_file(fp, config=config, allowlist=allowlist))
+                recovered.add(fp)
             except Exception:
                 pass  # already in errored list
+        errored = [fp for fp in errored if fp not in recovered]
 
     return all_findings, errored
 
@@ -211,7 +214,7 @@ def _parallel_scan(
 def scan_staged_files(
     root: str,
     config: Config,
-    allowlist: Optional[AllowList] = None,
+    allowlist: AllowList | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Scan only files staged in the git index (``git diff --cached``).
 
@@ -274,7 +277,7 @@ def scan_staged_files(
 def scan_git_history(
     root: str,
     config: Config,
-    allowlist: Optional[AllowList] = None,
+    allowlist: AllowList | None = None,
     max_commits: int = 100,
 ) -> list[dict]:
     """Scan ``git log -p`` output for credentials in committed history."""
@@ -408,7 +411,6 @@ def select_json_files(
                 break
 
         if valid:
-            seen: set[str] = set()
-            unique = [p for p in selected if not (p in seen or seen.add(p))]  # type: ignore[func-returns-value]
+            unique = list(dict.fromkeys(selected))
             print(f'  Selected {len(unique)} file(s) for .json scan.\n')
             return unique

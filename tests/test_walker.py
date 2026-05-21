@@ -1,6 +1,7 @@
 """Tests for directory walking and parallel scanning."""
 
 import os
+from unittest import mock
 
 from credactor.config import Config
 from credactor.walker import walk_and_scan
@@ -88,9 +89,19 @@ class TestWalkAndScan:
         assert len(findings) >= 5
         assert errored == []
 
-    def test_errored_files_list(self, tmp_dir):
-        """Files that error during scanning should appear in errored list."""
+    def test_permission_denied_handled_gracefully(self, tmp_dir):
+        """A directory with no scannable files produces no errors."""
         config = Config(no_color=True)
         findings, _, _, errored = walk_and_scan(tmp_dir, config)
-        # With no permission-denied files, errored should be empty
         assert errored == []
+
+    def test_scan_error_populates_errored(self, tmp_dir):
+        """scan_file raising an unexpected error populates the errored list."""
+        py_file = os.path.join(tmp_dir, 'target.py')
+        with open(py_file, 'w') as f:
+            f.write('x = 1\n')
+        config = Config(no_color=True)
+        with mock.patch('credactor.walker.scan_file', side_effect=RuntimeError('injected')):
+            _, _, _, errored = walk_and_scan(tmp_dir, config)
+        resolved = os.path.realpath(py_file)
+        assert any(os.path.realpath(e) == resolved for e in errored)

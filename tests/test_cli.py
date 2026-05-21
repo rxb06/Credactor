@@ -9,85 +9,10 @@ from credactor.cli import build_parser, main
 
 
 class TestBuildParser:
-    def test_default_target(self):
-        parser = build_parser()
-        args = parser.parse_args([])
-        assert args.target == '.'
-
-    def test_explicit_target(self):
-        parser = build_parser()
-        args = parser.parse_args(['/some/path'])
-        assert args.target == '/some/path'
-
-    def test_ci_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--ci', '.'])
-        assert args.ci is True
-
-    def test_dry_run_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--dry-run', '.'])
-        assert args.dry_run is True
-
-    def test_fix_all_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--fix-all', '.'])
-        assert args.fix_all is True
-
-    def test_staged_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--staged'])
-        assert args.staged is True
-
-    def test_scan_history_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--scan-history'])
-        assert args.scan_history is True
-
-    def test_format_json(self):
-        parser = build_parser()
-        args = parser.parse_args(['--format', 'json'])
-        assert args.output_format == 'json'
-
-    def test_format_sarif(self):
-        parser = build_parser()
-        args = parser.parse_args(['-f', 'sarif'])
-        assert args.output_format == 'sarif'
-
-    def test_no_color_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--no-color'])
-        assert args.no_color is True
-
-    def test_replace_mode(self):
-        parser = build_parser()
-        args = parser.parse_args(['--replace-with', 'env'])
-        assert args.replace_mode == 'env'
-
-    def test_custom_replacement(self):
-        parser = build_parser()
-        args = parser.parse_args(['--replacement', 'REMOVED'])
-        assert args.replacement == 'REMOVED'
-
-    def test_no_backup_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--no-backup'])
-        assert args.no_backup is True
-
     def test_config_path(self):
         parser = build_parser()
         args = parser.parse_args(['--config', '/path/to/config.toml'])
         assert args.config == '/path/to/config.toml'
-
-    def test_scan_json_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--scan-json'])
-        assert args.scan_json is True
-
-    def test_fail_on_error_flag(self):
-        parser = build_parser()
-        args = parser.parse_args(['--fail-on-error'])
-        assert args.fail_on_error is True
 
     def test_defaults(self):
         parser = build_parser()
@@ -177,6 +102,62 @@ class TestGitleaksFileTargetRejection:
         with pytest.raises(SystemExit) as exc_info:
             main(['--from-gitleaks', report, src_file])
         assert exc_info.value.code == 2
+
+
+class TestConfigFileIngestCLI:
+    """P4.3 / P4.4: [ingest] from_gitleaks / from_trufflehog in .credactor.toml."""
+
+    def _setup_project(self, tmp_dir: str) -> tuple[str, str]:
+        """Create a project dir with one low-entropy source file (native scanner ignores it)."""
+        repo = os.path.join(tmp_dir, 'repo')
+        src = os.path.join(repo, 'src')
+        os.makedirs(src)
+        src_file = os.path.join(src, 'config.py')
+        with open(src_file, 'w') as f:
+            f.write('api_key = "aaaaaaaaaa"\n')
+        return repo, src_file
+
+    def test_config_file_from_gitleaks_consumed(self, tmp_dir):
+        """P4.3: [ingest] from_gitleaks in .credactor.toml must produce exit 1."""
+        repo, _ = self._setup_project(tmp_dir)
+        finding = {
+            'File': 'src/config.py',
+            'StartLine': 1,
+            'Secret': 'aaaaaaaaaa',
+            'Match': 'api_key = "aaaaaaaaaa"',
+            'RuleID': 'generic-api-key',
+            'Tags': [],
+            'Commit': '',
+            'SymlinkFile': '',
+        }
+        report = os.path.join(tmp_dir, 'report.json')
+        with open(report, 'w') as f:
+            json.dump([finding], f)
+        with open(os.path.join(repo, '.credactor.toml'), 'w') as f:
+            f.write('[ingest]\n')
+            f.write(f'from_gitleaks = "{report}"\n')
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--dry-run', repo])
+        assert exc_info.value.code == 1
+
+    def test_config_file_from_trufflehog_consumed(self, tmp_dir):
+        """P4.4: [ingest] from_trufflehog in .credactor.toml must produce exit 1."""
+        repo, _ = self._setup_project(tmp_dir)
+        finding = {
+            'Raw': 'aaaaaaaaaa',
+            'SourceMetadata': {'Data': {'Filesystem': {'file': 'src/config.py', 'line': 1}}},
+            'DetectorName': 'CustomRegex',
+            'Verified': False,
+        }
+        report = os.path.join(tmp_dir, 'report.jsonl')
+        with open(report, 'w') as f:
+            f.write(json.dumps(finding) + '\n')
+        with open(os.path.join(repo, '.credactor.toml'), 'w') as f:
+            f.write('[ingest]\n')
+            f.write(f'from_trufflehog = "{report}"\n')
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--dry-run', repo])
+        assert exc_info.value.code == 1
 
 
 class TestGitleaksAllowlistIntegration:

@@ -11,7 +11,6 @@ import os
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Optional
 
 from .config import Config
 from .utils import detect_encoding
@@ -26,6 +25,8 @@ _MAX_REPORT_BYTES = 100_000_000
 # ---------------------------------------------------------------------------
 # Severity mapping tables
 # ---------------------------------------------------------------------------
+
+_SEVERITY_LEVELS = frozenset({'critical', 'high', 'medium', 'low'})
 
 _GITLEAKS_SEVERITY: dict[str, str] = {
     'aws-access-token': 'critical',
@@ -63,10 +64,9 @@ def _gitleaks_severity(rule_id: str, tags: list | None = None) -> str:
     Tags override: if any tag matches a severity level (case-insensitive),
     that takes precedence over the table lookup.
     """
-    _severity_levels = {'critical', 'high', 'medium', 'low'}
     if tags:
         for tag in tags:
-            if isinstance(tag, str) and tag.lower() in _severity_levels:
+            if isinstance(tag, str) and tag.lower() in _SEVERITY_LEVELS:
                 return tag.lower()
     return _GITLEAKS_SEVERITY.get(rule_id, 'medium')
 
@@ -75,7 +75,7 @@ def _gitleaks_severity(rule_id: str, tags: list | None = None) -> str:
 # Raw line synthesis
 # ---------------------------------------------------------------------------
 
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=None)
 def _read_file_lines(filepath: str) -> tuple[str, ...]:
     """Read all lines of a file and return as an immutable tuple (LRU-cached).
 
@@ -85,7 +85,7 @@ def _read_file_lines(filepath: str) -> tuple[str, ...]:
     try:
         with open(filepath, encoding=enc, errors='replace') as fh:
             return tuple(fh.readlines())
-    except (OSError, PermissionError):
+    except OSError:
         return ()
 
 
@@ -111,7 +111,7 @@ def ingest_gitleaks(
     filepath: str,
     target: str,
     *,
-    config: Optional[Config] = None,
+    config: Config | None = None,
 ) -> list[dict]:
     """Parse a Gitleaks JSON report and return a list of Credactor finding dicts.
 
@@ -157,7 +157,7 @@ def ingest_gitleaks(
     try:
         with open(filepath, encoding='utf-8', errors='strict') as fh:
             data = json.load(fh)
-    except (OSError, PermissionError) as exc:
+    except OSError as exc:
         raise ValueError(
             f'Cannot open Gitleaks file {filepath!r}: {exc}'
         ) from exc
@@ -332,7 +332,7 @@ def ingest_trufflehog(
     filepath: str,
     target: str,
     *,
-    config: Optional[Config] = None,
+    config: Config | None = None,
 ) -> list[dict]:
     """Parse a TruffleHog NDJSON output file and return Credactor finding dicts.
 
@@ -371,7 +371,7 @@ def ingest_trufflehog(
 
     try:
         fh = open(filepath, encoding='utf-8', errors='replace')
-    except (OSError, PermissionError) as exc:
+    except OSError as exc:
         raise ValueError(
             f'Cannot open TruffleHog file {filepath!r}: {exc}'
         ) from exc
@@ -590,7 +590,7 @@ def ingest_trufflehog(
 def deduplicate_findings(
     findings: list[dict],
     *,
-    config: Optional[Config] = None,
+    config: Config | None = None,
 ) -> list[dict]:
     """Remove duplicate findings, keeping the first (highest-fidelity) occurrence.
 
