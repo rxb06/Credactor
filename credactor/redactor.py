@@ -7,16 +7,14 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
+from ._log import logger
 from .config import Config
 from .types import Finding
 from .utils import detect_encoding, sanitize_for_terminal
 
-# SEC-10: Pattern for dangerous characters in replacement strings that could
-# enable code injection when the replaced file is executed.
 _UNSAFE_REPLACEMENT_RE = re.compile(
     r'[`$\\;|&]|__import__|eval\s*\(|exec\s*\(|system\s*\(|subprocess'
 )
@@ -43,9 +41,9 @@ def _make_replacement(
         # Derive env var name from the variable name in the finding
         var_name = _derive_env_var_name(finding)
         ext = Path(filepath).suffix.lower()
-        # SEC-30: Defence-in-depth — validate the sanitised var name (not the
-        # full replacement, which intentionally contains shell metacharacters
-        # like ${} for shell/YAML/config files).
+        # Validate the sanitised var name (not the full replacement, which
+        # intentionally contains shell metacharacters like ${} for
+        # shell/YAML/config files).
         if _UNSAFE_REPLACEMENT_RE.search(var_name):
             return 'REDACTED_BY_CREDACTOR'
         return _env_ref_for_language(var_name, ext)
@@ -74,9 +72,9 @@ def _derive_env_var_name(finding: Finding) -> str:
     else:
         return 'CREDENTIAL'
 
-    # SEC-30: Strip non-identifier characters to prevent code injection via
-    # crafted xml-attr keys (e.g. "password]);evil()//").  Environment variable
-    # names must be alphanumeric + underscore only.
+    # Strip non-identifier characters to prevent code injection via crafted
+    # xml-attr keys (e.g. "password]);evil()//").  Env var names must be
+    # alphanumeric + underscore only.
     sanitized = re.sub(r'[^A-Za-z0-9_]', '', raw)
     return sanitized if sanitized else 'CREDENTIAL'
 
@@ -109,14 +107,13 @@ def _env_ref_for_language(var_name: str, ext: str) -> str:
 def _create_backup(filepath: str, config: Config) -> str | None:
     """Create a .bak copy of the file. Returns backup path or None on failure.
 
-    SEC-01: When ``config.secure_backup_dir`` is set, the backup is placed
+    When ``config.secure_backup_dir`` is set, the backup is placed
     in that directory instead of beside the original file.
     """
     bak = filepath + '.bak'
 
-    # SEC-09: Atomic backup via mkstemp (O_CREAT|O_EXCL prevents symlink race).
-    # Previous approach used islink() + copy2() with a TOCTOU gap between
-    # the check and the write.
+    # Atomic backup via mkstemp (O_CREAT|O_EXCL prevents symlink race);
+    # prior approach used islink() + copy2() with a TOCTOU gap.
     dir_name = os.path.dirname(filepath) or '.'
     tmp_bak: str | None = None
     try:
@@ -126,7 +123,7 @@ def _create_backup(filepath: str, config: Config) -> str | None:
         os.replace(tmp_bak, bak)
         tmp_bak = None  # rename succeeded
     except OSError as exc:
-        print(f'  [WARN] Could not create backup {bak}: {exc}', file=sys.stderr)
+        logger.warning('Could not create backup %s: %s', bak, exc)
         if tmp_bak is not None:
             try:
                 os.unlink(tmp_bak)
@@ -134,24 +131,24 @@ def _create_backup(filepath: str, config: Config) -> str | None:
                 pass
         return None
 
-    # SEC-28: Warn once about plaintext backups when not using secure options
     if not config.backup_warn_shown and not config.secure_delete and not config.secure_backup_dir:
-        print('  [WARN] Plaintext backup created beside original file.',
-              file=sys.stderr)
-        print('    Use --secure-delete to auto-wipe, --secure-backup-dir to store '
-              'outside repo, or --no-backup to skip.', file=sys.stderr)
+        logger.warning(
+            'Plaintext backup created beside original file.\n'
+            '  Use --secure-delete to auto-wipe, --secure-backup-dir to store '
+            'outside repo, or --no-backup to skip.',
+        )
         config.backup_warn_shown = True
 
-    # SEC-01: Move backup to secure directory if configured
     if config.secure_backup_dir:
         dest_dir = Path(config.secure_backup_dir).resolve()
-        # SEC-20: Refuse if secure-backup-dir is a symlink to untrusted location.
-        # Return None to signal failure — caller will skip redaction for this file.
+        # Refuse if secure-backup-dir is a symlink — return None so caller
+        # skips redaction for this file.
         if os.path.islink(config.secure_backup_dir):
-            print(f'  [ERROR] --secure-backup-dir is a symlink (possible attack): '
-                  f'{config.secure_backup_dir}', file=sys.stderr)
-            print('  Refusing to proceed — backup security cannot be guaranteed.',
-                  file=sys.stderr)
+            logger.error(
+                '--secure-backup-dir is a symlink (possible attack): %s\n'
+                '  Refusing to proceed — backup security cannot be guaranteed.',
+                config.secure_backup_dir,
+            )
             # Clean up the in-repo backup we already created
             try:
                 os.unlink(bak)
@@ -164,14 +161,13 @@ def _create_backup(filepath: str, config: Config) -> str | None:
             shutil.move(bak, dest)
             return dest
         except OSError as exc:
-            print(f'  [WARN] Could not move backup to {dest_dir}: {exc}',
-                  file=sys.stderr)
+            logger.warning('Could not move backup to %s: %s', dest_dir, exc)
             # Fall through — backup still exists at original location
     return bak
 
 
 def _secure_delete(filepath: str) -> None:
-    """SEC-01: Overwrite file with random bytes before unlinking."""
+    """Overwrite file with random bytes before unlinking."""
     try:
         size = os.path.getsize(filepath)
         with open(filepath, 'wb') as fh:
@@ -180,8 +176,7 @@ def _secure_delete(filepath: str) -> None:
             os.fsync(fh.fileno())
         os.unlink(filepath)
     except OSError as exc:
-        print(f'  [WARN] Secure delete failed for {filepath}: {exc}',
-              file=sys.stderr)
+        logger.warning('Secure delete failed for %s: %s', filepath, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -205,17 +200,16 @@ def batch_replace_in_file(
     # #16 — detect encoding
     encoding = detect_encoding(filepath)
 
-    # Preserve file permissions (SEC-22: include setuid/setgid/sticky bits)
+    # Preserve file permissions (include setuid/setgid/sticky bits)
     try:
         orig_stat = os.stat(filepath)
         orig_mode = orig_stat.st_mode & 0o7777  # full mode including setuid/setgid
     except OSError:
         orig_mode = None
 
-    # SEC-15: Acquire advisory file lock to mitigate TOCTOU races between
-    # read and replace. Uses fcntl on Unix; silently skipped on Windows.
-    # On Windows fcntl is unavailable, so the handle must be closed
-    # immediately — keeping it open would block os.replace() later.
+    # Acquire advisory file lock to mitigate TOCTOU races between read and
+    # replace.  Uses fcntl on Unix; on Windows fcntl is unavailable so the
+    # handle is closed immediately to avoid blocking os.replace().
     lock_fh = None
     try:
         lock_fh = open(filepath, 'r')  # noqa: SIM115
@@ -236,18 +230,17 @@ def batch_replace_in_file(
         with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
             lines = fh.readlines()
     except OSError as exc:
-        print(f'  [ERROR] Cannot read {filepath}: {exc}', file=sys.stderr)
+        logger.error('Cannot read %s: %s', filepath, exc)
         if lock_fh:
             lock_fh.close()
         return 0, len(file_findings)
 
-    # #1 — backup before modifying (immediately after read per SEC-15)
+    # #1 — backup before modifying (immediately after read)
     bak: str | None = None
     if not config.no_backup:
         bak = _create_backup(filepath, config)
         if bak is None:
-            print(f'  [ERROR] Backup failed for {filepath} — skipping replacements.',
-                  file=sys.stderr)
+            logger.error('Backup failed for %s — skipping replacements.', filepath)
             return 0, len(file_findings)
 
     replaced = 0
@@ -262,13 +255,15 @@ def batch_replace_in_file(
         idx = lineno - 1
 
         if idx >= len(lines):
-            print(f'  [WARN] Line {lineno} out of range in {filepath} — skipping.')
+            logger.warning('Line %d out of range in %s — skipping.', lineno, filepath)
             failed += 1
             continue
 
         original = lines[idx]
         if full_value not in original:
-            print(f'  [WARN] Value no longer found on line {lineno} (already replaced?).')
+            logger.warning(
+                'Value no longer found on line %d in %s (already replaced?).', lineno, filepath,
+            )
             failed += 1
             continue
 
@@ -278,8 +273,6 @@ def batch_replace_in_file(
 
     # Atomic write: write to temp file, then rename over original.
     # Prevents corruption if process crashes mid-write.
-    # SEC-07: finally block ensures temp file cleanup even on unexpected crashes,
-    # preventing plaintext credential residue on disk.
     dir_name = os.path.dirname(filepath) or '.'
     tmp_path: str | None = None
     try:
@@ -289,10 +282,9 @@ def batch_replace_in_file(
         os.replace(tmp_path, filepath)
         tmp_path = None  # rename succeeded — nothing to clean up
     except OSError as exc:
-        print(f'  [ERROR] Cannot write {filepath}: {exc}', file=sys.stderr)
+        logger.error('Cannot write %s: %s', filepath, exc)
         return 0, len(file_findings)
     finally:
-        # SEC-07: Always remove temp file if it still exists (crash safety)
         if tmp_path is not None:
             try:
                 os.unlink(tmp_path)
@@ -306,11 +298,9 @@ def batch_replace_in_file(
         except OSError:
             pass
 
-    # SEC-01: Secure-delete backup after successful replacement
     if bak and config.secure_delete and replaced > 0:
         _secure_delete(bak)
 
-    # SEC-15: Release advisory file lock
     if lock_fh:
         lock_fh.close()
 
@@ -366,7 +356,6 @@ def interactive_review(
 
         masked = mask_secret(finding['full_value'])
 
-        # SEC-16: Sanitize display strings to prevent terminal injection
         safe_rel = sanitize_for_terminal(str(rel))
         safe_type = sanitize_for_terminal(finding['type'])
         safe_masked = sanitize_for_terminal(masked)

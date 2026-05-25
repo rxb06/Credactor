@@ -83,8 +83,6 @@ def print_report(
             rel = Path(filepath).relative_to(root_path)
         except ValueError:
             rel = Path(filepath)
-        # SEC-36: Sanitise file path for terminal output to prevent
-        # escape-sequence injection via crafted filenames.
         safe_rel = sanitize_for_terminal(str(rel))
         print(_c(f'  FILE: {safe_rel}', 'bold', use_color=color), file=stream)
         print(f'  {"─" * 60}', file=stream)
@@ -95,7 +93,6 @@ def print_report(
             # #2/#29 — mask the credential in the raw line display
             masked_raw = _mask_in_line(finding['raw'], finding['full_value'])
 
-            # SEC-36: Sanitise type and raw line for terminal output.
             safe_type = sanitize_for_terminal(finding['type'])
             safe_raw = sanitize_for_terminal(masked_raw[:120])
             sev_label = _c(f'[{severity.upper()}]', sev_color, use_color=color)
@@ -150,9 +147,6 @@ def sarif_report(findings: list[Finding], root: str) -> str:
     results = []
 
     for f in findings:
-        # SEC-35: Sanitise finding type for SARIF rule fields.  The type can
-        # contain attacker-controlled content (e.g. xml-attr keys), so escape
-        # HTML to prevent XSS in downstream SARIF viewers.
         safe_type = html.escape(f['type'])
         rule_id = safe_type.replace(':', '-')
         if rule_id not in rules:
@@ -197,8 +191,6 @@ def sarif_report(findings: list[Finding], root: str) -> str:
             'level': _sarif_level(f.get('severity', 'medium')),
             'message': {
                 'text': (
-                    # SEC-24: HTML-escape masked preview to prevent injection
-                    # in downstream SARIF consumers that render without sanitizing
                     f'Potential credential detected: {html.escape(f["type"])}'
                     f' ({html.escape(mask_secret(f["full_value"]))})'
                 ),

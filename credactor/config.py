@@ -5,9 +5,10 @@ Configuration loading from ``.credactor.toml`` files.
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from ._log import logger
 
 
 @dataclass
@@ -66,7 +67,7 @@ class Config:
 
 
 def _find_project_root(start: Path) -> Path | None:
-    """SEC-02: Walk up from *start* looking for a ``.git`` directory.
+    """Walk up from *start* looking for a ``.git`` directory.
 
     Returns the directory containing ``.git``, or ``None`` if not found.
     """
@@ -93,7 +94,7 @@ def load_config_file(
     if explicit_path:
         candidates = [Path(explicit_path)]
     else:
-        # HIGH-06: Limit traversal depth to prevent picking up config files
+        # Limit traversal depth to prevent picking up config files
         # from shared parent directories (e.g. /tmp/.credactor.toml).
         # Walk up at most 5 levels — enough for monorepo nesting.
         max_depth = 5
@@ -105,12 +106,10 @@ def load_config_file(
                 break
             p = p.parent
 
-    # SEC-02: Determine project root for trust boundary check
     project_root = _find_project_root(Path(root).resolve())
 
     for candidate in candidates:
         if candidate.is_file():
-            # SEC-02 / SEC-29 / SEC-33: Config trust boundary check
             # Normpath for cross-platform separator normalisation, then
             # append os.sep AFTER normpath to prevent prefix collision.
             _cand = os.path.normpath(str(candidate.resolve()))
@@ -122,27 +121,21 @@ def load_config_file(
                     _cand == _root or _cand.startswith(_root + os.sep)
                 )
             else:
-                # SEC-39: No project root found (no .git). Fall back to
-                # checking against the scan root — warn if config is in
-                # a parent directory, since we cannot verify trust.
                 outside = not (
                     _cand == _scan or _cand.startswith(_scan + os.sep)
                 )
 
             if outside:
                 if ci_mode:
-                    # SEC-29: Hard block in CI — never trust external config
-                    print(
-                        f'[ERROR] Refusing to load config from outside project '
-                        f'root in CI mode: {candidate}',
-                        file=sys.stderr,
+                    logger.error(
+                        'Refusing to load config from outside project '
+                        'root in CI mode: %s', candidate,
                     )
                     return {}
                 ref = project_root or root
-                print(
-                    f'[WARN] Config loaded from outside project root: '
-                    f'{candidate} (project root: {ref})',
-                    file=sys.stderr,
+                logger.warning(
+                    'Config loaded from outside project root: '
+                    '%s (project root: %s)', candidate, ref,
                 )
             return _parse_toml(candidate)
 
@@ -156,42 +149,35 @@ def _parse_toml(path: Path) -> dict:
         with open(path, 'rb') as fh:
             return tomllib.load(fh)
     except OSError as exc:
-        # SEC-03: Surface config read failures instead of silently ignoring
-        print(f'[WARN] Could not read config {path}: {exc}', file=sys.stderr)
+        logger.warning('Could not read config %s: %s', path, exc)
         return {}
     except tomllib.TOMLDecodeError as exc:
-        print(f'[WARN] Invalid TOML in {path}: {exc}', file=sys.stderr)
+        logger.warning('Invalid TOML in %s: %s', path, exc)
         return {}
 
 
 def apply_config_file(config: Config, file_data: dict) -> None:
     """Merge values from a parsed config file into the Config object."""
     if 'entropy_threshold' in file_data:
-        # SEC-38: Guard against type confusion (e.g. array where scalar expected).
         try:
             val = float(file_data['entropy_threshold'])
         except (ValueError, TypeError):
-            print('[WARN] entropy_threshold has invalid type, using default 3.5',
-                  file=sys.stderr)
+            logger.warning('entropy_threshold has invalid type, using default 3.5')
             val = 3.5
-        # SEC-12: Bound entropy threshold to valid Shannon entropy range
         if not 0.0 <= val <= 6.0:
-            print(f'[WARN] entropy_threshold={val} out of valid range (0.0-6.0), '
-                  f'using default 3.5', file=sys.stderr)
+            logger.warning(
+                'entropy_threshold=%s out of valid range (0.0-6.0), using default 3.5', val)
             val = 3.5
         config.entropy_threshold = val
     if 'min_value_length' in file_data:
-        # SEC-38: Guard against type confusion.
         try:
             val_i = int(file_data['min_value_length'])
         except (ValueError, TypeError):
-            print('[WARN] min_value_length has invalid type, using default 8',
-                  file=sys.stderr)
+            logger.warning('min_value_length has invalid type, using default 8')
             val_i = 8
-        # SEC-12: Bound min_value_length to reasonable range
         if not 1 <= val_i <= 200:
-            print(f'[WARN] min_value_length={val_i} out of valid range (1-200), '
-                  f'using default 8', file=sys.stderr)
+            logger.warning(
+                'min_value_length=%s out of valid range (1-200), using default 8', val_i)
             val_i = 8
         config.min_value_length = val_i
     if 'skip_dirs' in file_data:
@@ -206,20 +192,17 @@ def apply_config_file(config: Config, file_data: dict) -> None:
         config.custom_replacement = str(file_data['replacement'])
     ingest = file_data.get('ingest', {})
     if not isinstance(ingest, dict):
-        print('[WARN] [ingest] config section must be a table, ignoring',
-              file=sys.stderr)
+        logger.warning('[ingest] config section must be a table, ignoring')
     else:
         if 'from_gitleaks' in ingest:
             val = ingest['from_gitleaks']
             if not isinstance(val, str):
-                print('[WARN] ingest.from_gitleaks must be a string path, ignoring',
-                      file=sys.stderr)
+                logger.warning('ingest.from_gitleaks must be a string path, ignoring')
             else:
                 config.from_gitleaks = val
         if 'from_trufflehog' in ingest:
             val = ingest['from_trufflehog']
             if not isinstance(val, str):
-                print('[WARN] ingest.from_trufflehog must be a string path, ignoring',
-                      file=sys.stderr)
+                logger.warning('ingest.from_trufflehog must be a string path, ignoring')
             else:
                 config.from_trufflehog = val

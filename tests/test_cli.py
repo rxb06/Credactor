@@ -5,7 +5,55 @@ import os
 
 import pytest
 
-from credactor.cli import build_parser, main
+from credactor.cli import (
+    _config_from_args,
+    _validate_invocation,
+    build_parser,
+    main,
+)
+from credactor.config import Config
+
+
+class TestConfigFromArgs:
+    def test_round_trip(self):
+        parser = build_parser()
+        args = parser.parse_args([
+            '--ci', '--no-backup', '--format', 'sarif',
+            '--replace-with', 'env', '--verbose', '/tmp/x',
+        ])
+        config = _config_from_args(args)
+        assert isinstance(config, Config)
+        assert config.ci_mode is True
+        assert config.no_backup is True
+        assert config.output_format == 'sarif'
+        assert config.replace_mode == 'env'
+        assert config.verbose is True
+        assert config.target == '/tmp/x'
+
+
+class TestValidateInvocation:
+    def test_ci_plus_fix_all_exits_2(self):
+        config = Config(ci_mode=True, fix_all=True)
+        with pytest.raises(SystemExit) as exc:
+            _validate_invocation(config)
+        assert exc.value.code == 2
+
+    def test_scan_history_plus_gitleaks_exits_2(self):
+        config = Config(scan_history=True, from_gitleaks='/tmp/x.json')
+        with pytest.raises(SystemExit) as exc:
+            _validate_invocation(config)
+        assert exc.value.code == 2
+
+    def test_ci_mode_forces_dry_run(self):
+        config = Config(ci_mode=True, dry_run=False)
+        _validate_invocation(config)
+        assert config.dry_run is True
+
+    def test_dangerous_replacement_exits_2(self):
+        config = Config(custom_replacement='$(rm -rf /)')
+        with pytest.raises(SystemExit) as exc:
+            _validate_invocation(config)
+        assert exc.value.code == 2
 
 
 class TestBuildParser:

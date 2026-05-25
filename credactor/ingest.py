@@ -1,6 +1,5 @@
 """
 External scanner ingestion: Gitleaks JSON and TruffleHog NDJSON.
-SEC-40: All parsing uses stdlib json only (zero runtime deps policy).
 """
 from __future__ import annotations
 
@@ -12,12 +11,13 @@ import sys
 import urllib.parse
 from pathlib import Path
 
+from ._log import logger
 from .config import Config
 from .types import Finding
 from .utils import detect_encoding
 from .walker import _is_within_root
 
-# Maximum number of findings to ingest to prevent memory exhaustion (SEC-40b)
+# Maximum number of findings to ingest to prevent memory exhaustion
 _MAX_FINDINGS = 10_000
 # Maximum Gitleaks report file size — guards against OOM before json.load()
 # deserialises the full array.  100 MB >> any real report (10 k findings ≈ 5 MB).
@@ -119,18 +119,17 @@ def _resolve_external_finding_path(
     """Resolve, traversal-check, and self-ref-check a path from an external
     scanner finding. Returns the resolved path, or ``None`` to skip.
 
-    Combines SEC-40c (path traversal) and A13 (self-reference) guards plus
-    the optional missing-file warning, so both ingest_gitleaks and
+    Combines path-traversal and self-reference guards plus the optional
+    missing-file warning, so both ingest_gitleaks and
     ingest_trufflehog share identical handling.
     """
     resolved = str(Path(os.path.normpath(
         os.path.join(target_resolved, raw_file))).resolve())
 
     if not _is_within_root(resolved, target_resolved):
-        print(
-            f'[WARN] Skipping {scanner_name} finding: path {raw_file!r} '
-            f'resolves outside target directory (possible path traversal).',
-            file=sys.stderr,
+        logger.warning(
+            'Skipping %s finding: path %r resolves outside target directory '
+            '(possible path traversal).', scanner_name, raw_file,
         )
         return None
 
@@ -165,13 +164,12 @@ def ingest_gitleaks(
 ) -> list[Finding]:
     """Parse a Gitleaks JSON report and return a list of Credactor finding dicts.
 
-    SEC-40a: validates top-level is a list.
-    SEC-40b: caps at 10,000 findings.
-    SEC-40c: validates resolved paths are within the target directory.
+    Validates top-level is a list, caps at 10,000 findings, and checks
+    resolved paths are within the target directory.
     """
     verbose = config.verbose if config else False
     target_path = Path(target).resolve()
-    filepath_resolved = str(Path(filepath).resolve())  # A13: precompute for self-ref guard
+    filepath_resolved = str(Path(filepath).resolve())
     if target_path.is_file():
         # Defensive guard: callers should pass the repo root directory, not a
         # file. Using the file's parent prevents broken path joins like
@@ -185,9 +183,9 @@ def ingest_gitleaks(
         target_path = target_path.parent
     target_resolved = str(target_path)
 
-    # SEC-40b: reject oversized files before json.load() reads the whole
-    # array into memory — the 10,000-finding cap can only fire after full
-    # deserialisation, so a gigantic file would OOM first.
+    # Reject oversized files before json.load() reads the whole array into
+    # memory — the 10,000-finding cap fires only after full deserialisation,
+    # so a gigantic file would OOM first.
     try:
         report_size = os.path.getsize(filepath)
     except OSError as exc:
@@ -197,13 +195,10 @@ def ingest_gitleaks(
     if report_size > _MAX_REPORT_BYTES:
         raise ValueError(
             f'Gitleaks file {filepath!r} is {report_size:,} bytes; refusing to '
-            f'parse files over {_MAX_REPORT_BYTES:,} bytes (SEC-40b memory guard).'
+            f'parse files over {_MAX_REPORT_BYTES:,} bytes the configured limit.'
         )
 
     # Load JSON
-    # A4: use errors='strict' so non-UTF-8 bytes raise UnicodeDecodeError rather
-    # than being silently replaced with U+FFFD.  A Secret containing U+FFFD would
-    # never match the source file, causing silent redaction failure.
     try:
         with open(filepath, encoding='utf-8', errors='strict') as fh:
             data = json.load(fh)
@@ -214,26 +209,23 @@ def ingest_gitleaks(
     except UnicodeDecodeError as exc:
         raise ValueError(
             f'Gitleaks file {filepath!r} contains non-UTF-8 bytes; '
-            f'cannot parse safely (A4): {exc}'
+            f'cannot parse safely: {exc}'
         ) from exc
     except json.JSONDecodeError as exc:
         raise ValueError(
             f'Gitleaks file is not valid JSON ({filepath!r}): {exc}'
         ) from exc
 
-    # SEC-40a: top-level must be a list
     if not isinstance(data, list):
         raise ValueError(
             f'Gitleaks report must be a JSON array at top level '
             f'(got {type(data).__name__}). File: {filepath!r}'
         )
 
-    # SEC-40b: cap at 10,000
     if len(data) > _MAX_FINDINGS:
-        print(
-            f'[WARN] Gitleaks report contains {len(data)} findings; '
-            f'truncating to {_MAX_FINDINGS}.',
-            file=sys.stderr,
+        logger.warning(
+            'Gitleaks report contains %d findings; truncating to %d.',
+            len(data), _MAX_FINDINGS,
         )
         data = data[:_MAX_FINDINGS]
 
@@ -302,7 +294,7 @@ def ingest_gitleaks(
         }
 
         # --- Commit (omit key when empty) ---
-        # P2: type-check before slicing — non-string Commit (e.g. int, list)
+        # type-check before slicing — non-string Commit (e.g. int, list)
         # would raise TypeError or produce an unhashable value that crashes
         # deduplicate_findings later.
         commit = obj.get('Commit', '')
@@ -363,9 +355,8 @@ def ingest_trufflehog(
 ) -> list[Finding]:
     """Parse a TruffleHog NDJSON output file and return Credactor finding dicts.
 
-    SEC-40a: each line is validated as a JSON object.
-    SEC-40b: caps at 10,000 findings.
-    SEC-40c: validates resolved paths are within the target directory.
+    Validates each line as a JSON object, caps at 10,000 findings, and
+    checks resolved paths are within the target directory.
     """
     verbose = config.verbose if config else False
     target_path = Path(target).resolve()
@@ -379,11 +370,10 @@ def ingest_trufflehog(
         target_path = target_path.parent
     target_resolved = str(target_path)
 
-    filepath_resolved = str(Path(filepath).resolve())  # A13: precompute for self-ref guard
+    filepath_resolved = str(Path(filepath).resolve())
 
-    # SEC-40b / A1: file-size guard to prevent OOM on a multi-GB single-line NDJSON.
-    # The per-line _MAX_FINDINGS cap fires only after json.loads() succeeds, so a
-    # single line that is many GB long will exhaust memory before the cap can apply.
+    # File-size guard: the per-line cap fires only after json.loads() succeeds,
+    # so a single multi-GB line would exhaust memory before the cap can apply.
     try:
         report_size = os.path.getsize(filepath)
     except OSError as exc:
@@ -393,7 +383,7 @@ def ingest_trufflehog(
     if report_size > _MAX_REPORT_BYTES:
         raise ValueError(
             f'TruffleHog file {filepath!r} is {report_size:,} bytes; refusing to '
-            f'parse files over {_MAX_REPORT_BYTES:,} bytes (SEC-40b memory guard).'
+            f'parse files over {_MAX_REPORT_BYTES:,} bytes the configured limit.'
         )
 
     try:
@@ -432,12 +422,9 @@ def ingest_trufflehog(
                     )
                 continue
 
-            # SEC-40b: cap at 10,000
             if count >= _MAX_FINDINGS:
-                print(
-                    f'[WARN] TruffleHog report exceeds {_MAX_FINDINGS} findings; '
-                    f'truncating.',
-                    file=sys.stderr,
+                logger.warning(
+                    'TruffleHog report exceeds %d findings; truncating.', _MAX_FINDINGS,
                 )
                 break
 
@@ -451,23 +438,18 @@ def ingest_trufflehog(
                         file=sys.stderr,
                     )
                 continue
-            # A4: Guard against corrupted values caused by errors='replace' substituting
-            # U+FFFD for non-UTF-8 bytes in the NDJSON.  A Raw value containing U+FFFD
-            # will never match the actual source file content, causing silent redaction
-            # failure.  Skip the finding and warn rather than storing a bad full_value.
             if '\ufffd' in raw_secret:
                 if verbose:
                     print(
                         f'[WARN] TruffleHog line {lineno_file}: Raw field contains '
                         f'non-UTF-8 bytes (replacement character U+FFFD); skipping '
-                        f'to avoid corrupted redaction (A4).',
+                        f'to avoid corrupted redaction.',
                         file=sys.stderr,
                     )
                 continue
-            # A2: TruffleHog URL-encodes special characters in URI-based credentials
-            # (e.g. '@' → '%40' in MongoDB/PostgreSQL connection strings).
-            # Save both forms; the right form is selected after source-line synthesis
-            # so we can verify which encoding is actually present in the file.
+            # TruffleHog URL-encodes special characters in URI-based credentials
+            # (e.g. '@' → '%40').  Save both forms; the right one is selected
+            # after source-line synthesis to verify which is in the file.
             _raw_encoded = raw_secret
             _raw_decoded = urllib.parse.unquote(raw_secret)
 
@@ -494,7 +476,7 @@ def ingest_trufflehog(
                         file_path_raw = git.get('file', '') or ''
                         line_num = git.get('line', 1) or 1
                         raw_commit = git.get('commit', '') or ''
-                        # P2: type-check before slicing — non-string commit
+                        # type-check before slicing — non-string commit
                         # (e.g. int, list) would raise TypeError or produce an
                         # unhashable value that crashes deduplicate_findings.
                         if isinstance(raw_commit, str) and raw_commit:
@@ -536,7 +518,7 @@ def ingest_trufflehog(
             # --- Synthesise raw context line ---
             raw_ctx = _synthesise_raw(resolved, line_num)
 
-            # A2: Select the encoding form that actually appears in the source line.
+            # Select the encoding form that actually appears in the source line.
             # If TruffleHog URL-encoded the value (e.g. %40 → @) but the source file
             # contains the literal encoded form, the decoded form won't match and
             # redaction fails silently.  Prefer decoded; fall back to encoded only when

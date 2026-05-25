@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from ._log import configure as _configure_log
+from ._log import logger
 from .config import Config, apply_config_file, load_config_file
 from .redactor import _UNSAFE_REPLACEMENT_RE, fix_all, interactive_review
 from .report import json_report, print_gitignore_skipped, print_report, sarif_report
@@ -17,7 +19,6 @@ from .scanner import scan_file
 from .suppressions import AllowList
 from .types import Finding
 from .walker import scan_git_history, scan_staged_files, select_json_files, walk_and_scan
-
 
 # Guard against scanning system/sensitive directories — an exact match against
 # the resolved scan target rejects requests to scan well-known system roots.
@@ -197,12 +198,44 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(130)
 
 
-def _main_inner(argv: list[str] | None = None) -> None:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+# ---------------------------------------------------------------------------
+# Pipeline helpers extracted from _main_inner
+# ---------------------------------------------------------------------------
 
-    # Build Config
-    config = Config(
+def _emit_report(findings: list[Finding], target: str, config: Config) -> None:
+    """Emit findings to stdout in the configured format.
+
+    Handles the empty-findings case (clean exit message in text mode) and
+    unifies the json/sarif/text dispatch that previously appeared twice
+    inside _main_inner.
+    """
+    if not findings and config.output_format == 'text':
+        print('\n[OK] No hardcoded credentials detected. Safe for commits.\n')
+        return
+    if config.output_format == 'json':
+        print(json_report(findings, target))
+    elif config.output_format == 'sarif':
+        print(sarif_report(findings, target))
+    else:
+        print_report(findings, target, no_color=config.no_color)
+
+
+def _handle_errored_files(errored_files: list[str], config: Config) -> None:
+    """Report files that errored during scan; honour ``--fail-on-error``."""
+    if not errored_files:
+        return
+    print('', file=sys.stderr)
+    logger.warning('%d file(s) could not be scanned:', len(errored_files))
+    for fp in errored_files:
+        print(f'  - {fp}', file=sys.stderr)
+    if config.fail_on_error:
+        logger.error('Exiting due to --fail-on-error.')
+        sys.exit(2)
+
+
+def _config_from_args(args: argparse.Namespace) -> Config:
+    """Translate parsed argparse Namespace into a validated ``Config``."""
+    return Config(
         ci_mode=args.ci,
         dry_run=args.dry_run,
         fix_all=args.fix_all,
@@ -224,58 +257,59 @@ def _main_inner(argv: list[str] | None = None) -> None:
         from_trufflehog=args.from_trufflehog,
     )
 
-    # SEC-40: --scan-history conflicts with external ingestion
+
+def _validate_invocation(config: Config) -> None:
+    """Reject incompatible flag combinations and warn on hazardous configs."""
     if config.scan_history and (config.from_gitleaks or config.from_trufflehog):
-        print('[ERROR] --scan-history cannot be combined with --from-gitleaks '
-              'or --from-trufflehog. External findings reference on-disc files; '
-              'history scan references committed content.', file=sys.stderr)
+        logger.error(
+            '--scan-history cannot be combined with --from-gitleaks or --from-trufflehog. '
+            'External findings reference on-disc files; history scan references committed content.',
+        )
         sys.exit(2)
 
-    # SEC-26: --ci implies read-only — block file modifications in CI mode
     if config.ci_mode:
         if config.fix_all:
-            print('[ERROR] --ci and --fix-all are mutually exclusive. '
-                  '--ci is read-only by design.', file=sys.stderr)
+            logger.error('--ci and --fix-all are mutually exclusive. --ci is read-only by design.')
             sys.exit(2)
         if not config.dry_run:
             config.dry_run = True
 
-    # SEC-10: Validate replacement string for code injection
     if config.replace_mode in ('sentinel', 'custom'):
         if _UNSAFE_REPLACEMENT_RE.search(config.custom_replacement):
-            print('[ERROR] Replacement string contains potentially dangerous '
-                  'characters that could enable code injection.',
-                  file=sys.stderr)
-            print(f'  Value: {config.custom_replacement!r}', file=sys.stderr)
-            print('  Use only alphanumeric characters, underscores, and hyphens.',
-                  file=sys.stderr)
+            logger.error(
+                'Replacement string contains potentially dangerous characters '
+                'that could enable code injection.\n  Value: %r\n'
+                '  Use only alphanumeric characters, underscores, and hyphens.',
+                config.custom_replacement,
+            )
             sys.exit(2)
 
-    # SEC-18: Warn if running as root (Unix only)
     if hasattr(os, 'getuid') and os.getuid() == 0:
-        print('[WARN] Running as root — backup files may have restrictive '
-              'ownership. Consider running as a regular user.',
-              file=sys.stderr)
+        logger.warning(
+            'Running as root — backup files may have restrictive ownership. '
+            'Consider running as a regular user.',
+        )
 
-    # SEC-14: Warn about semantic changes with env replacement
     if config.replace_mode == 'env' and (config.fix_all or not config.ci_mode):
-        print('[WARN] --replace-with env changes string literals to function calls. '
-              'Ensure environment variables are set before running the modified code.',
-              file=sys.stderr)
+        logger.warning(
+            '--replace-with env changes string literals to function calls. '
+            'Ensure environment variables are set before running the modified code.',
+        )
 
-    # Load config file (#25)
-    target = config.target
+
+def _validate_target(target: str) -> Path:
+    """Resolve and validate the scan target; exit(2) on protected/home paths.
+
+    Returns the resolved ``Path`` for reuse by the banner and network-mount
+    warning logic.
+    """
     if not os.path.exists(target):
         print(f'Error: path not found: {target}', file=sys.stderr)
         sys.exit(2)
 
-    # Resolve once and reuse — used for protected-dir check, banner,
-    # and network-mount detection below.
     target_resolved_path = Path(target).resolve()
     resolved = str(target_resolved_path)
 
-    # Block system directories
-    # On Windows, also block any drive root (e.g. D:\, F:\) not just C:\
     if (
         resolved in _PROTECTED_DIRS
         or (sys.platform == 'win32' and len(resolved) == 3 and resolved[1:] == ':\\')
@@ -287,9 +321,8 @@ def _main_inner(argv: list[str] | None = None) -> None:
         print('  Point it at your project root (e.g. credactor ./my-project)',
               file=sys.stderr)
         sys.exit(2)
-    # Block home directory — too broad, will hang on gitignore walk
-    _home = str(Path.home())
-    if resolved == _home:
+
+    if resolved == str(Path.home()):
         print(f'Error: refusing to scan home directory: {resolved}',
               file=sys.stderr)
         print('  Scanning ~ includes thousands of directories and will hang.',
@@ -298,172 +331,177 @@ def _main_inner(argv: list[str] | None = None) -> None:
               file=sys.stderr)
         sys.exit(2)
 
-    file_data = load_config_file(target, config.config_path, ci_mode=config.ci_mode)
-    if file_data:
-        apply_config_file(config, file_data)
+    return target_resolved_path
 
-    # Suppressions (#3, #4)
-    allowlist = AllowList(target)
 
-    # Warning banner — remind user to scan project directories only
+def _print_banner(target_resolved_path: Path) -> None:
+    """Emit the scan-start banner and the network-mount warning if relevant."""
     print(f'Scanning: {target_resolved_path}', file=sys.stderr)
     print('  Note: Credactor scans forward (into subdirectories) only.',
           file=sys.stderr)
     print('  For best results, point it at your project root directory.',
           file=sys.stderr)
-
-    # SEC-17: Warn if target appears to be on a network mount
+    resolved = str(target_resolved_path)
     if resolved.startswith(('/mnt/', '/media/', '/Volumes/', '/net/')):
-        print('[WARN] Target appears to be on a mounted/network volume. '
-              'Atomic file operations (os.replace) may not be reliable on '
-              'NFS/SMB. Use --dry-run first.', file=sys.stderr)
-
-    # --- Dispatch based on mode ---
-    findings: list[Finding] = []
-    errored_files: list[str] = []
-
-    if config.staged_only:
-        # staged files only
-        findings, errored_files = scan_staged_files(target, config, allowlist)
-    elif config.scan_history:
-        # git history
-        findings = scan_git_history(target, config, allowlist)
-    else:
-        # Normal directory scan i.e single walk
-        dir_findings, gitignore_skipped, json_files, errored_files = walk_and_scan(
-            target, config, allowlist,
+        logger.warning(
+            'Target appears to be on a mounted/network volume. '
+            'Atomic file operations (os.replace) may not be reliable on '
+            'NFS/SMB. Use --dry-run first.',
         )
-        findings = dir_findings
 
-        # Report gitignored files
-        if config.output_format == 'text':
-            print_gitignore_skipped(gitignore_skipped, target, no_color=config.no_color)
 
-        # Optionally scan JSON files
-        if config.scan_json and json_files:
-            # Skip interactive selection when non-interactive
-            if (config.ci_mode or config.dry_run or config.fix_all
-                    or config.output_format != 'text'):
-                json_paths = json_files
-            else:
-                json_paths = select_json_files(json_files, target)
+def _handle_fix_all(findings: list[Finding], target: str, config: Config) -> int:
+    """Confirm with the user and run ``fix_all``. Returns unresolved count."""
+    by_file: dict[str, list[Finding]] = {}
+    for f in findings:
+        by_file.setdefault(f['file'], []).append(f)
+    print(f'\n  --fix-all will modify {len(by_file)} file(s) '
+          f'with {len(findings)} replacement(s).')
+    if not config.no_backup:
+        print('  .bak backups will be created (contain original secrets).')
+    else:
+        print('  ┌─────────────────────────────────────────────────────────┐')
+        print('  │  DANGER: --no-backup is set. Original values will be   │')
+        print('  │  PERMANENTLY LOST. Ensure you have git history or      │')
+        print('  │  another recovery mechanism before proceeding.         │')
+        print('  └─────────────────────────────────────────────────────────┘')
+    print('  Tip: run with --dry-run first to preview changes.')
+    try:
+        answer = input('  Proceed? [y/N]: ').strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print('\n  Aborted.')
+        sys.exit(1)
+    if answer not in ('y', 'yes'):
+        print('  Aborted.')
+        sys.exit(1)
+    return fix_all(findings, target, config)
 
-            for path in json_paths:
-                findings.extend(scan_file(path, config=config, allowlist=allowlist))
 
-    # --- Ingest external findings ---
+def _collect_findings(
+    target: str,
+    config: Config,
+    allowlist: AllowList,
+) -> tuple[list[Finding], list[str]]:
+    """Dispatch the native scan based on ``staged_only``/``scan_history``/walk.
+
+    Returns ``(findings, errored_files)``. Also runs the JSON-file
+    side-walk when ``--scan-json`` is set in directory mode.
+    """
+    if config.staged_only:
+        return scan_staged_files(target, config, allowlist)
+
+    if config.scan_history:
+        return scan_git_history(target, config, allowlist), []
+
+    findings, gitignore_skipped, json_files, errored_files = walk_and_scan(
+        target, config, allowlist,
+    )
+
+    if config.output_format == 'text':
+        print_gitignore_skipped(gitignore_skipped, target, no_color=config.no_color)
+
+    if config.scan_json and json_files:
+        if (config.ci_mode or config.dry_run or config.fix_all
+                or config.output_format != 'text'):
+            json_paths = json_files
+        else:
+            json_paths = select_json_files(json_files, target)
+        for path in json_paths:
+            findings.extend(scan_file(path, config=config, allowlist=allowlist))
+
+    return findings, errored_files
+
+
+def _ingest_external(
+    findings: list[Finding],
+    target: str,
+    config: Config,
+    allowlist: AllowList,
+) -> list[Finding]:
+    """Merge external scanner findings (Gitleaks/TruffleHog) into *findings*.
+
+    Validates that the report file exists and that the target is a directory
+    (external scanners report file paths relative to a repo root). Runs
+    deduplication when any external source contributed findings.
+    """
+    if not (config.from_gitleaks or config.from_trufflehog):
+        return findings
+
+    from .ingest import deduplicate_findings, ingest_gitleaks, ingest_trufflehog
+
+    def _suppressed(f: Finding) -> bool:
+        return allowlist.is_suppressed(f['file'], f['line'], f['full_value'])
+
     if config.from_gitleaks:
         if not os.path.isfile(config.from_gitleaks):
-            print(f'[ERROR] Gitleaks file not found: {config.from_gitleaks}',
-                  file=sys.stderr)
+            logger.error('Gitleaks file not found: %s', config.from_gitleaks)
             sys.exit(2)
         if os.path.isfile(target):
-            print(
-                '[ERROR] --from-gitleaks requires a directory target, not a file. '
+            logger.error(
+                '--from-gitleaks requires a directory target, not a file. '
                 'Pass the repository root directory so that file paths in the '
                 'Gitleaks report can be resolved correctly.',
-                file=sys.stderr,
             )
             sys.exit(2)
-        from .ingest import ingest_gitleaks
         try:
-            gitleaks_findings = ingest_gitleaks(config.from_gitleaks, target, config=config)
-            gitleaks_findings = [
-                f for f in gitleaks_findings
-                if not allowlist.is_suppressed(f['file'], f['line'], f['full_value'])
-            ]
-            findings.extend(gitleaks_findings)
+            gl = ingest_gitleaks(config.from_gitleaks, target, config=config)
+            findings.extend(f for f in gl if not _suppressed(f))
         except ValueError as exc:
-            print(f'[ERROR] {exc}', file=sys.stderr)
+            logger.error('%s', exc)
             sys.exit(2)
 
     if config.from_trufflehog:
         if not os.path.isfile(config.from_trufflehog):
-            print(f'[ERROR] TruffleHog file not found: {config.from_trufflehog}',
-                  file=sys.stderr)
+            logger.error('TruffleHog file not found: %s', config.from_trufflehog)
             sys.exit(2)
         if os.path.isfile(target):
-            print(
-                '[ERROR] --from-trufflehog requires a directory target, not a file. '
+            logger.error(
+                '--from-trufflehog requires a directory target, not a file. '
                 'Pass the repository root directory so that file paths in the '
                 'TruffleHog report can be resolved correctly.',
-                file=sys.stderr,
             )
             sys.exit(2)
-        from .ingest import ingest_trufflehog
         try:
-            trufflehog_findings = ingest_trufflehog(config.from_trufflehog, target, config=config)
-            trufflehog_findings = [
-                f for f in trufflehog_findings
-                if not allowlist.is_suppressed(f['file'], f['line'], f['full_value'])
-            ]
-            findings.extend(trufflehog_findings)
+            th = ingest_trufflehog(config.from_trufflehog, target, config=config)
+            findings.extend(f for f in th if not _suppressed(f))
         except ValueError as exc:
-            print(f'[ERROR] {exc}', file=sys.stderr)
+            logger.error('%s', exc)
             sys.exit(2)
 
-    # --- Deduplicate when external findings were ingested ---
-    if config.from_gitleaks or config.from_trufflehog:
-        from .ingest import deduplicate_findings
-        findings = deduplicate_findings(findings, config=config)
+    return deduplicate_findings(findings, config=config)
 
-    # Report errored files and fail if --fail-on-error
-    if errored_files:
-        print(f'\n[WARN] {len(errored_files)} file(s) could not be scanned:',
-              file=sys.stderr)
-        for fp in errored_files:
-            print(f'  - {fp}', file=sys.stderr)
-        if config.fail_on_error:
-            print('[ERROR] Exiting due to --fail-on-error.', file=sys.stderr)
-            sys.exit(2)
+
+def _main_inner(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    config = _config_from_args(args)
+    _configure_log(verbose=config.verbose, no_color=config.no_color)
+    _validate_invocation(config)
+
+    target = config.target
+    target_resolved_path = _validate_target(target)
+
+    file_data = load_config_file(target, config.config_path, ci_mode=config.ci_mode)
+    if file_data:
+        apply_config_file(config, file_data)
+
+    allowlist = AllowList(target)
+    _print_banner(target_resolved_path)
+
+    findings, errored_files = _collect_findings(target, config, allowlist)
+    findings = _ingest_external(findings, target, config, allowlist)
+    _handle_errored_files(errored_files, config)
 
     if not findings:
-        if config.output_format == 'json':
-            print(json_report(findings, target))
-        elif config.output_format == 'sarif':
-            print(sarif_report(findings, target))
-        else:
-            print('\n[OK] No hardcoded credentials detected. Safe for commits.\n')
+        _emit_report(findings, target, config)
         sys.exit(0)
 
-    # We have findings — report them
-    if config.output_format == 'json':
-        print(json_report(findings, target))
-    elif config.output_format == 'sarif':
-        print(sarif_report(findings, target))
-    else:
-        print_report(findings, target, no_color=config.no_color)
+    _emit_report(findings, target, config)
 
     if config.ci_mode or config.dry_run:
         sys.exit(1)
 
     if config.fix_all:
-        # Confirmation before destructive batch operation
-        by_file: dict[str, list[Finding]] = {}
-        for f in findings:
-            by_file.setdefault(f['file'], []).append(f)
-        print(f'\n  --fix-all will modify {len(by_file)} file(s) '
-              f'with {len(findings)} replacement(s).')
-        if not config.no_backup:
-            print('  .bak backups will be created (contain original secrets).')
-        else:
-            # SEC-11: Strong warning for --fix-all --no-backup (no recovery)
-            print('  ┌─────────────────────────────────────────────────────────┐')
-            print('  │  DANGER: --no-backup is set. Original values will be   │')
-            print('  │  PERMANENTLY LOST. Ensure you have git history or      │')
-            print('  │  another recovery mechanism before proceeding.         │')
-            print('  └─────────────────────────────────────────────────────────┘')
-        print('  Tip: run with --dry-run first to preview changes.')
-        try:
-            answer = input('  Proceed? [y/N]: ').strip().lower()
-        except (KeyboardInterrupt, EOFError):
-            print('\n  Aborted.')
-            sys.exit(1)
-        if answer not in ('y', 'yes'):
-            print('  Aborted.')
-            sys.exit(1)
-
-        unresolved = fix_all(findings, target, config)
+        unresolved = _handle_fix_all(findings, target, config)
         sys.exit(1 if unresolved > 0 else 0)
 
     # Non-text formats in non-CI mode: report and exit 1

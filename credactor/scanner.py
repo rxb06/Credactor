@@ -9,9 +9,9 @@ Addresses: #3 (inline suppression in scan), #10 (multi-line awareness),
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
+from ._log import logger
 from .config import Config
 from .patterns import (
     _PEM_KEY_RE,
@@ -31,12 +31,12 @@ from .utils import detect_encoding, entropy, log_verbose
 ENTROPY_THRESHOLD = 3.5
 MIN_VALUE_LENGTH = 8
 
-# Max lines to skip inside a PEM block before force-resetting (CVE-02 fix)
-# Increased from 100 to 500 to accommodate large RSA/EC keys without
-# false-resetting mid-block.
+# Max lines to skip inside a PEM block before force-resetting
+# (increased from 100 to 500 to accommodate large RSA/EC keys without
+# false-resetting mid-block)
 _MAX_PEM_BLOCK_LINES = 500
 
-# Max file size to scan (bytes) — skip silently above this (HIGH-05 fix)
+# Max file size to scan (bytes) — skip silently above this
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 # Function call heuristic: identifier(...) complete call
@@ -80,7 +80,7 @@ _HASH_VAR_SUFFIXES = (
     '_fingerprint', '_hmac', '_encrypted', '_cipher',
 )
 
-# SEC-06: Cap line length to prevent regex backtracking on adversarial input
+# Cap line length to prevent regex backtracking on adversarial input
 # (e.g. minified JS, base64 blobs).  Real credentials never span 4 KiB.
 _MAX_LINE_LENGTH = 4096
 
@@ -106,7 +106,7 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
         return True
 
     # Environment variable / template references.
-    # SEC-34: Require matching closing delimiters for brace syntax to prevent
+    # Require matching closing delimiters for brace syntax to prevent
     # false negatives on values like "${AKIA1234567890123456" (unclosed).
     # Bare $VAR and $VAR_NAME (no braces) are safe — they're env var names.
     if cleaned.startswith('${{') and '}}' in cleaned:
@@ -114,7 +114,7 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if cleaned.startswith('${') and '}' in cleaned:
         return True
     if cleaned.startswith('$') and not cleaned.startswith('${'):
-        # SEC-37: Bare $VAR — validate that the text after $ begins with a
+        # Bare $VAR — validate that the text after $ begins with a
         # plausible POSIX env var name ([A-Za-z_][A-Za-z0-9_]*).  Uses
         # re.match (prefix) rather than fullmatch so that dynamic references
         # with suffixes ($HOME/.aws/credentials, $TOKEN:prefix, $VAR-suffix)
@@ -132,7 +132,7 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if cleaned.startswith('op://'):
         return True
 
-    # Function call: full value looks like identifier(...) (CVE-01 fix)
+    # Function call: full value looks like identifier(...)
     # e.g. get_secret(), Variable.get("key"), os.getenv("X")
     # Also catch truncated calls like "generate_password(length," where
     # the unquoted capture stopped at a space mid-argument list.
@@ -157,7 +157,7 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
             return True
 
     # Path-like strings: require high slash density (>20%) AND at least
-    # 3 slashes to reduce false negatives (HIGH-02 fix)
+    # 3 slashes to reduce false negatives
     slash_count = raw.count('/')
     if slash_count >= 3 and (slash_count / max(len(raw), 1)) > 0.20:
         return True
@@ -208,11 +208,9 @@ def scan_line(
 
     # #3 — inline suppression
     if has_inline_suppression(line):
-        # SEC-27: Verbose suppression audit trail
         log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by inline credactor:ignore')
         return findings
 
-    # SEC-06: Cap line length to bound worst-case regex execution time
     if len(line) > _MAX_LINE_LENGTH:
         line = line[:_MAX_LINE_LENGTH]
         stripped = line.strip()
@@ -357,10 +355,10 @@ def scan_file(
     try:
         file_size = Path(filepath).stat().st_size
         if file_size > _MAX_FILE_SIZE:
-            print(f'[WARN] Skipping {filepath}: file too large '
-                  f'({file_size / 1024 / 1024:.1f} MB > '
-                  f'{_MAX_FILE_SIZE / 1024 / 1024:.0f} MB limit)',
-                  file=sys.stderr)
+            logger.warning(
+                'Skipping %s: file too large (%.1f MB > %.0f MB limit)',
+                filepath, file_size / 1024 / 1024, _MAX_FILE_SIZE / 1024 / 1024,
+            )
             return findings
     except OSError:
         pass  # proceed; open() will fail with a better message
@@ -372,7 +370,7 @@ def scan_file(
         with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
             lines = fh.readlines()
     except OSError as exc:
-        print(f'[WARN] Cannot read {filepath}: {exc}', file=sys.stderr)
+        logger.warning('Cannot read %s: %s', filepath, exc)
         return findings
 
     # Strip BOM from first line if present
@@ -406,12 +404,12 @@ def scan_file(
         elif in_pem_block:
             pem_block_lines += 1
             if pem_block_lines > _MAX_PEM_BLOCK_LINES:
-                # CVE-02: unclosed PEM block — stop suppressing lines
                 in_pem_block = False
                 pem_block_lines = 0
-                print(f'[WARN] {filepath}:{lineno}: unclosed PEM block '
-                      f'(>{_MAX_PEM_BLOCK_LINES} lines) — resuming scan',
-                      file=sys.stderr)
+                logger.warning(
+                    '%s:%d: unclosed PEM block (>%d lines) — resuming scan',
+                    filepath, lineno, _MAX_PEM_BLOCK_LINES,
+                )
                 findings.extend(scan_line(lineno, line, filepath,
                                           config=config, allowlist=allowlist))
             else:
@@ -446,7 +444,7 @@ def _scan_multiline_strings(
 
     full_text = ''.join(lines)
 
-    # SEC-19: Cap multiline block size to prevent ReDoS on huge triple-quoted strings
+    # Cap multiline block size to prevent ReDoS on huge triple-quoted strings
     _MAX_BLOCK_SIZE = 8192
 
     for open_delim, close_delim in delimiters:
@@ -459,7 +457,6 @@ def _scan_multiline_strings(
             if end_idx < 0:
                 break  # no more closing delimiters — done with this delimiter type
             block = full_text[idx + len(open_delim):end_idx]
-            # SEC-19: Truncate oversized blocks to bound regex time
             if len(block) > _MAX_BLOCK_SIZE:
                 block = block[:_MAX_BLOCK_SIZE]
             # Determine line number of the opening delimiter

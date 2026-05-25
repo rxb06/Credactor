@@ -39,6 +39,7 @@ Repository = "https://github.com/rxb06/Credactor"
 
 [tool.setuptools.packages.find]
 include = ["credactor*"]
+exclude = ["mydocs*", "tests*", "scripts*", "examples*", "hooks*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

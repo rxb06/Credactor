@@ -15,8 +15,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
+from ._log import logger
 from .config import Config
-from .gitignore import load_gitignore_patterns, matches_gitignore
+from .gitignore import matches_gitignore, parse_gitignore_file
 from .patterns import SKIP_DIRS, SKIP_FILES
 from .scanner import scan_file, should_scan_file
 from .suppressions import AllowList
@@ -25,7 +26,7 @@ from .utils import log_verbose
 
 
 def _is_within_root(path_str: str, root_str: str) -> bool:
-    """SEC-33: Cross-platform path containment check.
+    """Cross-platform path containment check.
 
     On Windows, git returns forward-slash paths but Path.resolve() returns
     backslash paths.  Normalise both sides so the startswith() boundary
@@ -34,7 +35,7 @@ def _is_within_root(path_str: str, root_str: str) -> bool:
     Appends os.sep AFTER normpath to prevent prefix collision
     (e.g. /tmp/repo must not match /tmp/repo_evil).
 
-    A11: os.path.normcase() is added for Windows defense-in-depth — it
+    os.path.normcase() is added for Windows defense-in-depth — it
     lowercases paths on Windows (NTFS case-insensitive) so that a path
     differing only in case from the root is not incorrectly treated as
     outside it.  normcase() is a no-op on Linux (case-sensitive) and
@@ -67,7 +68,7 @@ def walk_and_scan(
     Returns (findings, gitignore_skipped, json_files_available, errored_files).
     """
     root_path = Path(root).resolve()
-    gi_patterns = load_gitignore_patterns(root)
+    gi_patterns: list[tuple[str, Path]] = []
 
     scannable: list[str] = []
     json_files: list[str] = []
@@ -80,6 +81,9 @@ def walk_and_scan(
     # Additionally filter out symlinks that escape the scan root to
     # prevent traversal into parent or unrelated directories.
     # Append separator so '/tmp/repo' won't prefix-match '/tmp/repo_evil'.
+    # Gitignore patterns are accumulated during the same walk pass —
+    # os.walk is top-down by default, so a .gitignore at dir D is parsed
+    # before any of D's subtree files are checked.
     root_str = str(root_path) + os.sep
     for dirpath, dirnames, filenames in os.walk(root_path):
         dirnames[:] = [
@@ -87,13 +91,16 @@ def walk_and_scan(
             if d not in extra_skip_dirs
             and _is_within_root(str(Path(os.path.join(dirpath, d)).resolve()), root_str)
         ]
+        if '.gitignore' in filenames:
+            gi_patterns.extend(parse_gitignore_file(
+                os.path.join(dirpath, '.gitignore'),
+                Path(dirpath).resolve(),
+            ))
         for filename in filenames:
             if filename in extra_skip_files:
                 continue
             full_path = os.path.join(dirpath, filename)
 
-            # SEC-23: Skip file symlinks that resolve outside the scan root.
-            # Prevents reading/modifying external files via planted symlinks.
             if os.path.islink(full_path):
                 try:
                     resolved_file = str(Path(full_path).resolve())
@@ -155,8 +162,7 @@ def _parallel_scan(
                 all_findings.extend(scan_file(fp, config=config, allowlist=allowlist))
             except Exception as exc:
                 errored.append(fp)
-                print(f'[WARN] Error scanning {fp}: {exc}',
-                      file=sys.stderr)
+                logger.warning('Error scanning %s: %s', fp, exc)
             progress(i)
         return all_findings, errored
 
@@ -172,29 +178,25 @@ def _parallel_scan(
             try:
                 result = future.result()
             except OSError as exc:
-                # SEC-05: Detect fd exhaustion and fall back
                 if exc.errno == errno.EMFILE:
                     emfile_hit = True
                     errored.append(fp)
-                    print('[WARN] Too many open files — remaining '
-                          'files will be scanned sequentially.',
-                          file=sys.stderr)
+                    logger.warning(
+                        'Too many open files — remaining files will be scanned sequentially.',
+                    )
                 else:
                     errored.append(fp)
-                    print(f'[WARN] Error scanning {fp}: {exc}',
-                          file=sys.stderr)
+                    logger.warning('Error scanning %s: %s', fp, exc)
                 result = []
             except Exception as exc:
                 errored.append(fp)
-                print(f'[WARN] Error scanning {fp}: {exc}',
-                      file=sys.stderr)
+                logger.warning('Error scanning %s: %s', fp, exc)
                 result = []
             with lock:
                 done_count += 1
                 progress(done_count)
                 all_findings.extend(result)
 
-    # SEC-05: Re-scan files that failed due to fd exhaustion sequentially
     if emfile_hit:
         recovered: set[str] = set()
         for fp in list(errored):
@@ -220,7 +222,6 @@ def scan_staged_files(
 
     Returns (findings, errored_files).
     """
-    # SEC-04: Resolve path before passing to subprocess
     root_path = Path(root).resolve()
     try:
         result = subprocess.run(
@@ -228,30 +229,30 @@ def scan_staged_files(
             capture_output=True, text=True, cwd=str(root_path), timeout=30,
         )
         if result.returncode != 0:
-            print(f'[ERROR] git diff failed: {result.stderr.strip()}',
-                  file=sys.stderr)
+            logger.error('git diff failed: %s', result.stderr.strip())
             return [], []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
+        logger.error('Cannot run git: %s', exc)
         return [], []
     raw_staged = result.stdout.strip().splitlines()
 
-    # SEC-31: Warn if suppression/config files are staged alongside code.
-    # A malicious contributor could add .credactor.toml with extra_safe_values
-    # or .credactorignore patterns to silently disable detection in the same PR.
+    # Warn if suppression/config files are staged alongside code — a malicious
+    # contributor could stage .credactor.toml or .credactorignore changes to
+    # silently disable detection in the same PR.
     _CONFIG_BASENAMES = {'.credactor.toml', '.credactorignore'}
     staged_configs = [f for f in raw_staged if Path(f).name in _CONFIG_BASENAMES]
     if staged_configs:
-        print('[WARN] Suppression/config files staged alongside code changes: '
-              f'{", ".join(staged_configs)}. '
-              'Review these for detection-bypass attempts.',
-              file=sys.stderr)
+        logger.warning(
+            'Suppression/config files staged alongside code changes: %s. '
+            'Review these for detection-bypass attempts.',
+            ', '.join(staged_configs),
+        )
 
     staged = []
     for line in raw_staged:
-        # SEC-32: Reject paths with '..' path components (traversal guard,
-        # consistent with SEC-25).  Uses component check, not substring,
-        # so filenames like 'secret..py' are not falsely skipped.
+        # Reject paths with '..' path components (traversal guard,
+        # consistent with the git-history scanner).  Uses component check,
+        # not substring, so filenames like 'secret..py' are not falsely skipped.
         if any(part == '..' for part in Path(line).parts):
             continue
         full_path = str(root_path / line)
@@ -259,7 +260,6 @@ def scan_staged_files(
             resolved = str(Path(full_path).resolve())
         except OSError:
             continue
-        # SEC-33: Normalise path separators for cross-platform containment
         if not _is_within_root(resolved, str(root_path) + os.sep):
             continue
         if os.path.isfile(full_path) and should_scan_file(line, config.extra_extensions):
@@ -281,7 +281,6 @@ def scan_git_history(
     max_commits: int = 100,
 ) -> list[Finding]:
     """Scan ``git log -p`` output for credentials in committed history."""
-    # SEC-04: Resolve path before passing to subprocess
     root_path = Path(root).resolve()
     try:
         result = subprocess.run(
@@ -290,11 +289,10 @@ def scan_git_history(
             capture_output=True, text=True, cwd=str(root_path), timeout=120,
         )
         if result.returncode != 0:
-            print(f'[ERROR] git log failed: {result.stderr.strip()}',
-                  file=sys.stderr)
+            logger.error('git log failed: %s', result.stderr.strip())
             return []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
+        logger.error('Cannot run git: %s', exc)
         return []
 
     findings: list[Finding] = []
@@ -310,16 +308,14 @@ def scan_git_history(
             continue
         if line.startswith('+++ b/'):
             current_file = line[6:]
-            # SEC-25: Reject paths with '..' path components from git output.
-            # Uses component check, not substring, so filenames like
-            # 'secret..py' are not falsely skipped.
+            # Reject '..' path components from git output — component check,
+            # not substring, so 'secret..py' is not falsely skipped.
             if any(part == '..' for part in Path(current_file).parts):
                 current_file = ''
             diff_lineno = 0
             continue
         if line.startswith('@@'):
             # Parse hunk header: @@ -old,count +new,count @@
-            # MED-01 fix: use regex instead of naive split on '+'
             hunk_match = re.search(r'\+(\d+)', line)
             if hunk_match:
                 diff_lineno = int(hunk_match.group(1)) - 1

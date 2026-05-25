@@ -181,7 +181,7 @@ class TestGitleaksInputValidation:
         report = tmp_path / 'huge.json'
         # Write a file exactly one byte over the limit.
         report.write_bytes(b'x' * (_MAX_REPORT_BYTES + 1))
-        with pytest.raises(ValueError, match='SEC-40b'):
+        with pytest.raises(ValueError, match='refusing to parse'):
             ingest_gitleaks(str(report), str(target))
 
     def test_gitleaks_non_string_file_skipped(self, tmp_path):
@@ -1006,7 +1006,7 @@ class TestA1TrufflehogFileSizeGuard:
         with report.open('wb') as fh:
             fh.seek(_MAX_REPORT_BYTES)
             fh.write(b'\n')
-        with pytest.raises(ValueError, match='bytes.*SEC-40b'):
+        with pytest.raises(ValueError, match='refusing to parse'):
             ingest_trufflehog(str(report), str(target))
 
     def test_trufflehog_accepts_file_at_limit(self, tmp_path):
@@ -1038,7 +1038,7 @@ class TestA1TrufflehogFileSizeGuard:
         with report.open('wb') as fh:
             fh.seek(_MAX_REPORT_BYTES)
             fh.write(b'\n')
-        with pytest.raises(ValueError, match='bytes.*SEC-40b'):
+        with pytest.raises(ValueError, match='refusing to parse'):
             ingest_gitleaks(str(report), str(target))
 
 

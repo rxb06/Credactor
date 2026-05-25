@@ -6,9 +6,9 @@ Addresses: #3 (inline suppression), #4 (allowlist file)
 
 import fnmatch
 import os
-import sys
 from pathlib import Path
 
+from ._log import logger
 from .patterns import SCAN_EXTENSIONS, SUPPRESS_RE
 
 
@@ -56,21 +56,20 @@ class AllowList:
                             continue
                     # glob-like or plain path
                     if any(c in line for c in ('*', '?', '/', os.sep, '.')):
-                        # SEC-13: Warn on overly broad patterns that suppress everything
                         if line in ('*', '**', '**/*', '*.*'):
-                            print(f'[WARN] .credactorignore contains overly broad '
-                                  f'pattern "{line}" — this suppresses ALL files.',
-                                  file=sys.stderr)
-                        # SEC-13b: Warn on extension-targeting wildcards that cover
-                        # scannable file types (e.g. "**/*.py", "*.js")
+                            logger.warning(
+                                '.credactorignore contains overly broad pattern "%s" '
+                                '— this suppresses ALL files.', line,
+                            )
                         elif any(
                             line.endswith(ext) and line.lstrip('*').lstrip('/').startswith('*')
                             or line == f'*{ext}'
                             for ext in SCAN_EXTENSIONS
                         ):
-                            print(f'[WARN] .credactorignore pattern "{line}" may '
-                                  f'suppress many scannable files.',
-                                  file=sys.stderr)
+                            logger.warning(
+                                '.credactorignore pattern "%s" may suppress many scannable files.',
+                                line,
+                            )
                         self._file_globs.append(line)
                     else:
                         # treat as a value literal to suppress
