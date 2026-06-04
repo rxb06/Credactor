@@ -4,6 +4,7 @@ import os
 from unittest import mock
 
 from credactor.config import Config
+from credactor.suppressions import AllowList
 from credactor.walker import walk_and_scan
 
 
@@ -94,6 +95,32 @@ class TestWalkAndScan:
         config = Config(no_color=True)
         findings, _, _, errored = walk_and_scan(tmp_dir, config)
         assert errored == []
+
+    def test_file_level_suppression_logs_clean_message(self, tmp_dir, credactor_caplog):
+        """File-level allowlist suppression logs a clean message; the [SKIP]
+        prefix is supplied by the log formatter, not hard-coded in the message.
+
+        Regression guard: log_verbose routes through logger.debug and
+        _BracketFormatter prepends '  [SKIP] ' for DEBUG records, so a literal
+        prefix in the message string would render twice.
+        """
+        # credactor:ignore
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        with open(os.path.join(tmp_dir, 'secret.py'), 'w') as f:
+            f.write(f'aws_key = "{key}"\n')
+        with open(os.path.join(tmp_dir, '.credactorignore'), 'w') as f:
+            f.write('secret.py\n')
+
+        config = Config(no_color=True)
+        allowlist = AllowList(tmp_dir)
+        walk_and_scan(tmp_dir, config, allowlist)
+
+        skip_records = [
+            r for r in credactor_caplog.records
+            if 'suppressed by allowlist (file-level)' in r.message
+        ]
+        assert skip_records, 'expected a file-level suppression log record'
+        assert all('[SKIP]' not in r.message for r in skip_records)
 
     def test_scan_error_populates_errored(self, tmp_dir):
         """scan_file raising an unexpected error populates the errored list."""

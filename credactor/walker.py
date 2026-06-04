@@ -116,7 +116,7 @@ def walk_and_scan(
 
             # Allowlist file-level suppression
             if allowlist and allowlist.is_file_suppressed(full_path):
-                log_verbose(config, f'  [SKIP] {full_path} suppressed by allowlist (file-level)')
+                log_verbose(config, f'{full_path} suppressed by allowlist (file-level)')
                 continue
 
             p = Path(filename)

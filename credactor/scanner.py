@@ -208,7 +208,7 @@ def scan_line(
 
     # #3 — inline suppression
     if has_inline_suppression(line):
-        log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by inline credactor:ignore')
+        log_verbose(config, f'{filepath}:{lineno} suppressed by inline credactor:ignore')
         return findings
 
     if len(line) > _MAX_LINE_LENGTH:
@@ -238,11 +238,11 @@ def scan_line(
                 # hex/high-entropy: skip if line contains hash/digest variable
                 is_hex_like = label in ('hex credential', 'high-entropy string')
                 if is_hex_like and _HASH_CONTEXT_RE.search(line):
-                    log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by hash context')
+                    log_verbose(config, f'{filepath}:{lineno} suppressed by hash context')
                     continue
 
                 if _is_safe_value(val, extra_safe):
-                    log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic')
+                    log_verbose(config, f'{filepath}:{lineno} suppressed by safe value heuristic')
                     continue
                 if len(val) < min_len and label != 'private key header':
                     continue
@@ -251,7 +251,7 @@ def scan_line(
 
                 # Allowlist check
                 if allowlist and allowlist.is_suppressed(filepath, lineno, val):
-                    log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by allowlist')
+                    log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist')
                     continue
 
                 findings.append({
@@ -272,14 +272,14 @@ def scan_line(
             if not CRED_VAR_PATTERNS.search(xml_key):
                 continue
             if _is_safe_value(xml_val, extra_safe):
-                log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic')
+                log_verbose(config, f'{filepath}:{lineno} suppressed by safe value heuristic')
                 continue
             if len(xml_val.strip()) < min_len:
                 continue
             if entropy(xml_val.strip()) < ent_threshold:
                 continue
             if allowlist and allowlist.is_suppressed(filepath, lineno, xml_val):
-                log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by allowlist')
+                log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist')
                 continue
             findings.append({
                 'file':          filepath,
@@ -317,7 +317,7 @@ def scan_line(
         if any(low_var.endswith(s) for s in _HASH_VAR_SUFFIXES):
             continue
         if _is_safe_value(val, extra_safe):
-            log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by safe value heuristic')
+            log_verbose(config, f'{filepath}:{lineno} suppressed by safe value heuristic')
             continue
         val_stripped = val.strip()
         if len(val_stripped) < min_len:
@@ -325,7 +325,7 @@ def scan_line(
         if entropy(val_stripped) < ent_threshold:
             continue
         if allowlist and allowlist.is_suppressed(filepath, lineno, val_stripped):
-            log_verbose(config, f'  [SKIP] {filepath}:{lineno} suppressed by allowlist')
+            log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist')
             continue
 
         findings.append({

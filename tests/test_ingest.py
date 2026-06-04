@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -521,18 +522,15 @@ class TestTrufflehogBasicFinding:
         results = ingest_trufflehog(str(report), str(target))
         assert len(results) == 2
 
-    def test_trufflehog_invalid_line_skipped(self, tmp_path, capsys):
-        """Malformed JSON line is skipped with a warning."""
+    def test_trufflehog_invalid_line_skipped(self, tmp_path, credactor_caplog):
+        """Malformed JSON line is skipped with a log message."""
         target, _ = _make_th_target(tmp_path)
         report = tmp_path / 'report.json'
         good = json.dumps(_make_trufflehog_finding())
         report.write_text(f'not_json\n{good}\n', encoding='utf-8')
-        from credactor.config import Config
-        cfg = Config(verbose=True)
-        results = ingest_trufflehog(str(report), str(target), config=cfg)
+        results = ingest_trufflehog(str(report), str(target))
         assert len(results) == 1
-        captured = capsys.readouterr()
-        assert 'warn' in captured.err.lower()
+        assert any('invalid' in r.message.lower() for r in credactor_caplog.records)
 
 
 class TestTrufflehogSourceTypes:
@@ -559,8 +557,8 @@ class TestTrufflehogSourceTypes:
         assert results[0]['type'] == 'external:trufflehog:GitHub'
         assert results[0]['commit'] == 'deadbeef1234'
 
-    def test_trufflehog_unsupported_source_skipped(self, tmp_path, capsys):
-        """S3/Docker source type skipped with verbose warning."""
+    def test_trufflehog_unsupported_source_skipped(self, tmp_path, credactor_caplog):
+        """S3/Docker source type skipped with a log message."""
         target, _ = _make_th_target(tmp_path)
         finding = {
             'DetectorName': 'AWS',
@@ -577,12 +575,9 @@ class TestTrufflehogSourceTypes:
             },
         }
         report = _write_ndjson(tmp_path, [finding])
-        from credactor.config import Config
-        cfg = Config(verbose=True)
-        results = ingest_trufflehog(str(report), str(target), config=cfg)
+        results = ingest_trufflehog(str(report), str(target))
         assert results == []
-        captured = capsys.readouterr()
-        assert 'warn' in captured.err.lower()
+        assert any('unsupported' in r.message.lower() for r in credactor_caplog.records)
 
 
 class TestTrufflehogInputValidation:
@@ -938,23 +933,17 @@ class TestDeduplication:
         """Empty input returns empty list without error."""
         assert deduplicate_findings([]) == []
 
-    def test_dedup_verbose_prints_count(self, capsys):
-        """With config.verbose, removed count is printed to stderr."""
-        from credactor.config import Config
+    def test_dedup_verbose_prints_count(self, credactor_caplog):
+        """When findings are deduplicated, a log message reports the count."""
         f = _make_finding()
-        cfg = Config(verbose=True)
-        deduplicate_findings([f, f.copy()], config=cfg)
-        captured = capsys.readouterr()
-        assert 'Deduplicated 1' in captured.err
+        deduplicate_findings([f, f.copy()])
+        assert any('Deduplicated 1' in r.message for r in credactor_caplog.records)
 
-    def test_dedup_verbose_silent_when_no_dups(self, capsys):
-        """With config.verbose but no dups, nothing extra is printed."""
-        from credactor.config import Config
+    def test_dedup_verbose_silent_when_no_dups(self, credactor_caplog):
+        """When no findings are removed, no dedup log message is emitted."""
         f = _make_finding()
-        cfg = Config(verbose=True)
-        deduplicate_findings([f], config=cfg)
-        captured = capsys.readouterr()
-        assert 'Deduplicated' not in captured.err
+        deduplicate_findings([f])
+        assert not any('Deduplicated' in r.message for r in credactor_caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -1137,21 +1126,17 @@ class TestA4EncodingGuards:
         with pytest.raises(ValueError, match='non-UTF-8 bytes'):
             ingest_gitleaks(str(report), str(target))
 
-    def test_trufflehog_fffd_in_raw_skips_finding(self, tmp_path, capsys):
+    def test_trufflehog_fffd_in_raw_skips_finding(self, tmp_path, credactor_caplog):
         """TruffleHog finding whose Raw field contains U+FFFD is skipped."""
-        from credactor.config import Config
         target, _ = _make_th_target(tmp_path)
         # Manually construct NDJSON where Raw contains the replacement character
         finding = _make_trufflehog_finding(Raw='AKIAI\ufffdEXAMPLE')
         report = _write_ndjson(tmp_path, [finding])
-        cfg = Config(verbose=True)
-        results = ingest_trufflehog(str(report), str(target), config=cfg)
+        results = ingest_trufflehog(str(report), str(target))
         assert results == []
-        captured = capsys.readouterr()
-        assert (
-            'non-UTF-8' in captured.err
-            or 'U+FFFD' in captured.err
-            or 'replacement' in captured.err
+        assert any(
+            'non-UTF-8' in r.message or 'U+FFFD' in r.message or 'replacement' in r.message
+            for r in credactor_caplog.records
         )
 
     def test_trufflehog_valid_utf8_not_skipped(self, tmp_path):
@@ -1239,9 +1224,8 @@ class TestA13SelfReferentialReport:
         # The self-referential finding must be skipped
         assert results == []
 
-    def test_gitleaks_self_referential_verbose_warns(self, tmp_path, capsys):
-        """In verbose mode, skipping the self-referential finding emits a warning."""
-        from credactor.config import Config
+    def test_gitleaks_self_referential_verbose_warns(self, tmp_path, credactor_caplog):
+        """Skipping a self-referential finding emits a log message."""
         target = tmp_path / 'repo'
         target.mkdir()
         report = target / 'gitleaks_report.json'
@@ -1252,10 +1236,11 @@ class TestA13SelfReferentialReport:
             StartLine=1,
         )
         report.write_text(json.dumps([finding]), encoding='utf-8')
-        cfg = Config(verbose=True)
-        ingest_gitleaks(str(report), str(target), config=cfg)
-        captured = capsys.readouterr()
-        assert 'self' in captured.err.lower() or 'report' in captured.err.lower()
+        ingest_gitleaks(str(report), str(target))
+        assert any(
+            'self' in r.message.lower() or 'report' in r.message.lower()
+            for r in credactor_caplog.records
+        )
 
     def test_gitleaks_non_self_finding_not_affected(self, tmp_path):
         """Normal Gitleaks findings are unaffected when report is inside target dir."""
@@ -1290,9 +1275,8 @@ class TestA13SelfReferentialReport:
         results = ingest_trufflehog(str(report), str(target))
         assert results == []
 
-    def test_trufflehog_self_referential_verbose_warns(self, tmp_path, capsys):
-        """In verbose mode, skipping self-referential TruffleHog finding emits warning."""
-        from credactor.config import Config
+    def test_trufflehog_self_referential_verbose_warns(self, tmp_path, credactor_caplog):
+        """Skipping a self-referential TruffleHog finding emits a log message."""
         target = tmp_path / 'repo'
         target.mkdir()
         report = target / 'trufflehog_output.json'
@@ -1304,10 +1288,11 @@ class TestA13SelfReferentialReport:
             }}},
         )
         report.write_text(json.dumps(finding) + '\n', encoding='utf-8')
-        cfg = Config(verbose=True)
-        ingest_trufflehog(str(report), str(target), config=cfg)
-        captured = capsys.readouterr()
-        assert 'self' in captured.err.lower() or 'report' in captured.err.lower()
+        ingest_trufflehog(str(report), str(target))
+        assert any(
+            'self' in r.message.lower() or 'report' in r.message.lower()
+            for r in credactor_caplog.records
+        )
 
     def test_trufflehog_non_self_finding_not_affected(self, tmp_path):
         """Normal TruffleHog findings are unaffected when report is inside target dir."""
@@ -1326,9 +1311,6 @@ class TestA13SelfReferentialReport:
         of >= 2 on a self-referential finding proves both sides of the guard are
         folded — a regression where normcase is removed would drop the count to 0.
         """
-        import unittest.mock as mock
-        import os
-
         target = tmp_path / 'repo'
         target.mkdir()
         report = target / 'gitleaks_report.json'
@@ -1348,10 +1330,7 @@ class TestA13SelfReferentialReport:
         assert m.call_count >= 2
 
     def test_trufflehog_self_referential_normcase_called_on_both_sides(self, tmp_path):
-        """A13 normcase: os.path.normcase is invoked for both sides of the TruffleHog self-ref guard."""
-        import unittest.mock as mock
-        import os
-
+        """A13 normcase: normcase invoked for both sides of the TruffleHog self-ref guard."""
         target = tmp_path / 'repo'
         target.mkdir()
         report = target / 'trufflehog_output.json'

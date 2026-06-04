@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import math
 import re
-import sys
 from collections import Counter
 from typing import TYPE_CHECKING
 
@@ -17,13 +16,14 @@ if TYPE_CHECKING:
 
 
 def log_verbose(config: Config | None, msg: str) -> None:
-    """Emit *msg* to stderr only when ``config.verbose`` is set.
+    """Emit *msg* at DEBUG level via the credactor logger.
 
-    Centralises the ``if config and config.verbose: print(...)`` idiom that
-    was scattered across scanner/walker/ingest modules.
+    The handler level (WARNING by default, DEBUG after configure(verbose=True))
+    determines whether the message reaches stderr.  The ``config`` parameter is
+    kept for call-site compatibility; it is no longer consulted at runtime.
     """
-    if config and config.verbose:
-        print(msg, file=sys.stderr)
+    from ._log import logger
+    logger.debug(msg)
 
 
 def entropy(s: str) -> float:

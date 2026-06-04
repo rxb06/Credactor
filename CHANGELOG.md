@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Verbose diagnostics in the external-scanner ingest paths (`--from-gitleaks`,
+  `--from-trufflehog`) and the deduplication pass now flow through the central
+  logger instead of raw `print(..., file=sys.stderr)`. Informational ingest
+  messages display with the `[INFO]` prefix (previously `[WARN]`), and per-line
+  suppression breadcrumbs route through `logger.debug` (`[SKIP]`). Output stays
+  on stderr and default (non-verbose) runs are unchanged.
 - **BREAKING:** Minimum Python version raised to **3.11**. Python 3.10
   support is dropped. Users on 3.10 must pin to credactor `< 3.0` or
   upgrade Python. Rationale: 3.10 reaches end-of-life in October 2026,

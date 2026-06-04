@@ -168,7 +168,9 @@ class TestApplyConfigFile:
 
     def test_apply_ingest_both_keys(self):
         c = Config()
-        apply_config_file(c, {'ingest': {'from_gitleaks': '/tmp/g.json', 'from_trufflehog': '/tmp/t.jsonl'}})
+        apply_config_file(
+            c, {'ingest': {'from_gitleaks': '/tmp/g.json', 'from_trufflehog': '/tmp/t.jsonl'}}
+        )
         assert c.from_gitleaks == '/tmp/g.json'
         assert c.from_trufflehog == '/tmp/t.jsonl'
 

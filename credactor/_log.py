@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import ClassVar
 
 logger = logging.getLogger('credactor')
 logger.setLevel(logging.DEBUG)   # let the handler filter; logger sees everything
@@ -21,7 +22,7 @@ logger.propagate = False
 class _BracketFormatter(logging.Formatter):
     """Emit messages with the bracket prefixes credactor uses on stderr."""
 
-    _PREFIX: dict[int, str] = {
+    _PREFIX: ClassVar[dict[int, str]] = {
         logging.DEBUG:   '  [SKIP] ',
         logging.INFO:    '  [INFO] ',
         logging.WARNING: '[WARN] ',

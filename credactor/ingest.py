@@ -7,7 +7,6 @@ import functools
 import hashlib
 import json
 import os
-import sys
 import urllib.parse
 from pathlib import Path
 
@@ -114,7 +113,6 @@ def _resolve_external_finding_path(
     filepath_resolved: str,
     *,
     scanner_name: str,
-    verbose: bool,
 ) -> str | None:
     """Resolve, traversal-check, and self-ref-check a path from an external
     scanner finding. Returns the resolved path, or ``None`` to skip.
@@ -134,20 +132,15 @@ def _resolve_external_finding_path(
         return None
 
     if os.path.normcase(resolved) == os.path.normcase(filepath_resolved):
-        if verbose:
-            print(
-                f'[WARN] Skipping {scanner_name} finding: path resolves to the '
-                f'report file itself ({resolved!r}); skipping to avoid '
-                f'self-corruption.',
-                file=sys.stderr,
-            )
+        logger.info(
+            'Skipping %s finding: path resolves to the report file itself '
+            '(%r); skipping to avoid self-corruption.',
+            scanner_name, resolved,
+        )
         return None
 
-    if verbose and not os.path.isfile(resolved):
-        print(
-            f'[WARN] {scanner_name} finding references missing file: {resolved!r}',
-            file=sys.stderr,
-        )
+    if not os.path.isfile(resolved):
+        logger.info('%s finding references missing file: %r', scanner_name, resolved)
 
     return resolved
 
@@ -167,19 +160,17 @@ def ingest_gitleaks(
     Validates top-level is a list, caps at 10,000 findings, and checks
     resolved paths are within the target directory.
     """
-    verbose = config.verbose if config else False
     target_path = Path(target).resolve()
     filepath_resolved = str(Path(filepath).resolve())
     if target_path.is_file():
         # Defensive guard: callers should pass the repo root directory, not a
         # file. Using the file's parent prevents broken path joins like
         # <file>/src/config.py, but a warning is emitted so the caller knows.
-        if verbose:
-            print(
-                f'[WARN] ingest_gitleaks: target {str(target_path)!r} is a file; '
-                f'using its parent directory for path resolution.',
-                file=sys.stderr,
-            )
+        logger.warning(
+            'ingest_gitleaks: target %r is a file; '
+            'using its parent directory for path resolution.',
+            str(target_path),
+        )
         target_path = target_path.parent
     target_resolved = str(target_path)
 
@@ -233,31 +224,25 @@ def ingest_gitleaks(
 
     for obj in data:
         if not isinstance(obj, dict):
-            if verbose:
-                print('[WARN] Skipping non-object entry in Gitleaks report.',
-                      file=sys.stderr)
+            logger.info('Skipping non-object entry in Gitleaks report.')
             continue
 
         # --- Secret ---
         secret = obj.get('Secret', '')
         if not isinstance(secret, str) or not secret:
-            if verbose:
-                print('[WARN] Skipping Gitleaks finding with empty Secret.',
-                      file=sys.stderr)
+            logger.info('Skipping Gitleaks finding with empty Secret.')
             continue
 
         # --- File path ---
         # Use SymlinkFile if non-empty, otherwise File
         raw_file = obj.get('SymlinkFile') or obj.get('File', '')
         if not isinstance(raw_file, str) or not raw_file:
-            if verbose:
-                print('[WARN] Skipping Gitleaks finding with non-string or empty File.',
-                      file=sys.stderr)
+            logger.info('Skipping Gitleaks finding with non-string or empty File.')
             continue
 
         resolved = _resolve_external_finding_path(
             raw_file, target_resolved, filepath_resolved,
-            scanner_name='Gitleaks', verbose=verbose,
+            scanner_name='Gitleaks',
         )
         if resolved is None:
             continue
@@ -358,15 +343,13 @@ def ingest_trufflehog(
     Validates each line as a JSON object, caps at 10,000 findings, and
     checks resolved paths are within the target directory.
     """
-    verbose = config.verbose if config else False
     target_path = Path(target).resolve()
     if target_path.is_file():
-        if verbose:
-            print(
-                f'[WARN] ingest_trufflehog: target {str(target_path)!r} is a file; '
-                f'using its parent directory for path resolution.',
-                file=sys.stderr,
-            )
+        logger.warning(
+            'ingest_trufflehog: target %r is a file; '
+            'using its parent directory for path resolution.',
+            str(target_path),
+        )
         target_path = target_path.parent
     target_resolved = str(target_path)
 
@@ -405,21 +388,17 @@ def ingest_trufflehog(
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError as exc:
-                if verbose:
-                    print(
-                        f'[WARN] TruffleHog file line {lineno_file}: '
-                        f'skipping invalid JSON: {exc}',
-                        file=sys.stderr,
-                    )
+                logger.info(
+                    'TruffleHog file line %d: skipping invalid JSON: %s',
+                    lineno_file, exc,
+                )
                 continue
 
             if not isinstance(obj, dict):
-                if verbose:
-                    print(
-                        f'[WARN] TruffleHog file line {lineno_file}: '
-                        f'skipping non-object JSON value.',
-                        file=sys.stderr,
-                    )
+                logger.info(
+                    'TruffleHog file line %d: skipping non-object JSON value.',
+                    lineno_file,
+                )
                 continue
 
             if count >= _MAX_FINDINGS:
@@ -431,21 +410,17 @@ def ingest_trufflehog(
             # --- Raw secret ---
             raw_secret = obj.get('Raw', '')
             if not isinstance(raw_secret, str) or not raw_secret:
-                if verbose:
-                    print(
-                        f'[WARN] TruffleHog line {lineno_file}: '
-                        f'skipping finding with empty Raw.',
-                        file=sys.stderr,
-                    )
+                logger.info(
+                    'TruffleHog line %d: skipping finding with empty Raw.',
+                    lineno_file,
+                )
                 continue
             if '\ufffd' in raw_secret:
-                if verbose:
-                    print(
-                        f'[WARN] TruffleHog line {lineno_file}: Raw field contains '
-                        f'non-UTF-8 bytes (replacement character U+FFFD); skipping '
-                        f'to avoid corrupted redaction.',
-                        file=sys.stderr,
-                    )
+                logger.info(
+                    'TruffleHog line %d: Raw field contains non-UTF-8 bytes '
+                    '(replacement character U+FFFD); skipping to avoid corrupted redaction.',
+                    lineno_file,
+                )
                 continue
             # TruffleHog URL-encodes special characters in URI-based credentials
             # (e.g. '@' → '%40').  Save both forms; the right one is selected
@@ -484,29 +459,25 @@ def ingest_trufflehog(
                         source_found = True
 
             if not source_found:
-                if verbose:
-                    supported = {'Filesystem', 'Git'}
-                    unsupported = set(data.keys()) - supported if isinstance(data, dict) else set()
-                    print(
-                        f'[WARN] TruffleHog line {lineno_file}: '
-                        f'unsupported source type '
-                        f'{list(unsupported) if unsupported else "(unknown)"}; skipping.',
-                        file=sys.stderr,
-                    )
+                supported = {'Filesystem', 'Git'}
+                unsupported = set(data.keys()) - supported if isinstance(data, dict) else set()
+                logger.info(
+                    'TruffleHog line %d: unsupported source type %s; skipping.',
+                    lineno_file,
+                    list(unsupported) if unsupported else '(unknown)',
+                )
                 continue
 
             if not isinstance(file_path_raw, str) or not file_path_raw:
-                if verbose:
-                    print(
-                        f'[WARN] TruffleHog line {lineno_file}: '
-                        f'skipping finding with non-string or empty file path.',
-                        file=sys.stderr,
-                    )
+                logger.info(
+                    'TruffleHog line %d: skipping finding with non-string or empty file path.',
+                    lineno_file,
+                )
                 continue
 
             resolved = _resolve_external_finding_path(
                 file_path_raw, target_resolved, filepath_resolved,
-                scanner_name='TruffleHog', verbose=verbose,
+                scanner_name='TruffleHog',
             )
             if resolved is None:
                 continue
@@ -591,8 +562,6 @@ def deduplicate_findings(
     then trufflehog.  First occurrence wins, so priority is automatically
     Credactor > Gitleaks > TruffleHog.
     """
-    verbose = config.verbose if config else False
-
     def _base(f: dict) -> tuple:
         path_norm = os.path.normpath(os.path.realpath(f.get('file', '')))
         line = f.get('line', 1)
@@ -631,7 +600,7 @@ def deduplicate_findings(
         result.append(f)
 
     removed = len(findings) - len(result)
-    if verbose and removed:
-        print(f'  [INFO] Deduplicated {removed} finding(s).', file=sys.stderr)
+    if removed:
+        logger.info('Deduplicated %d finding(s).', removed)
 
     return result

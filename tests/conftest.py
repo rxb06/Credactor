@@ -1,5 +1,6 @@
 """Shared fixtures for Credactor tests."""
 
+import logging
 import os
 import tempfile
 
@@ -19,6 +20,23 @@ def _reset_log_level():
     _configure_log(verbose=False)
     yield
     _configure_log(verbose=False)
+
+
+@pytest.fixture
+def credactor_caplog(caplog):
+    """caplog that captures credactor logger records despite propagate=False.
+
+    The credactor logger sets propagate=False so pytest's default caplog
+    (which attaches to the root logger) misses its records.  This fixture
+    attaches caplog.handler directly and sets the capture level to DEBUG.
+    """
+    from credactor._log import logger
+    caplog.set_level(logging.DEBUG, logger='credactor')
+    logger.addHandler(caplog.handler)
+    try:
+        yield caplog
+    finally:
+        logger.removeHandler(caplog.handler)
 
 
 @pytest.fixture

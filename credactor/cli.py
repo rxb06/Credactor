@@ -491,11 +491,9 @@ def _main_inner(argv: list[str] | None = None) -> None:
     findings = _ingest_external(findings, target, config, allowlist)
     _handle_errored_files(errored_files, config)
 
-    if not findings:
-        _emit_report(findings, target, config)
-        sys.exit(0)
-
     _emit_report(findings, target, config)
+    if not findings:
+        sys.exit(0)
 
     if config.ci_mode or config.dry_run:
         sys.exit(1)
