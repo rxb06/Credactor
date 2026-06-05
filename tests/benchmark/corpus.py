@@ -93,8 +93,10 @@ CASES: list[Case] = [
     Case('weak_pw_1', 'weak-password', 'weakpw1.py', 'password = "Summer2024!"\n', True,
          note='H7 FIXED: password-family entropy floor 3.0 (entropy 3.10)'),
     Case('weak_pw_2', 'weak-password', 'weakpw2.py', 'api_secret = "Password123"\n', True,
-         gap=True, note='H11: CRED_VAR_PATTERNS misses bare api_secret/secret '
-                        '(var-name gap, NOT entropy — entropy 3.28 passes the 3.0 floor)'),
+         gap=True, note='still missed: var name now matched (H11), but api_secret is '
+                        'outside the H7 password-family carve-out, so entropy 3.28 < the '
+                        '3.5 floor. Needs the carve-out extended to secret-family '
+                        '(maintainer decision).'),
     Case('jwt_compact', 'structural', 'jwtc.py', f'tok = "{_JWT_COMPACT}"\n', True,
          gap=True, note='L1: compact JWT misread as dotted access'),
     Case('pem_file', 'key-file', 'server.pem', _PEM + '\n', True,

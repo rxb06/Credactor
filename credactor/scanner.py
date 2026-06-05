@@ -137,6 +137,10 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
     if cleaned.startswith('op://'):
         return True
 
+    # HashiCorp Vault secret reference: vault:secret/path or vault://...
+    if cleaned.startswith('vault:'):
+        return True
+
     # Function call: full value looks like identifier(...)
     # e.g. get_secret(), Variable.get("key"), os.getenv("X")
     # Also catch truncated calls like "generate_password(length," where

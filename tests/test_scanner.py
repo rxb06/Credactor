@@ -191,6 +191,35 @@ class TestPasswordFamilyFloor:
         assert len(findings) == 0
 
 
+class TestSecretFamilyVars:
+    """H11: secret-family variable names are recognized by CRED_VAR_PATTERNS."""
+
+    _SECRET = 'r4nd0mSecretVal9876'
+
+    def test_bare_secret_var_detected(self, config):
+        findings = scan_line(1, f'secret = "{self._SECRET}"', 'test.py', config=config)
+        assert len(findings) == 1
+        assert findings[0]['type'] == 'variable:secret'
+
+    def test_api_secret_var_detected(self, config):
+        findings = scan_line(1, f'api_secret = "{self._SECRET}"', 'test.py', config=config)
+        assert len(findings) == 1
+
+    def test_auth_secret_var_detected(self, config):
+        findings = scan_line(1, f'auth_secret = "{self._SECRET}"', 'test.py', config=config)
+        assert len(findings) == 1
+
+    def test_vault_reference_not_flagged(self, config):
+        # adding bare `secret` must not flag a Vault reference (a dynamic lookup)
+        findings = scan_line(1, 'secret = "vault:secret/data/app"', 'test.py', config=config)
+        assert len(findings) == 0
+
+    def test_secretary_not_matched(self, config):
+        # bare `secret` must not match inside `secretary` (word boundary)
+        findings = scan_line(1, f'secretary = "{self._SECRET}"', 'test.py', config=config)
+        assert len(findings) == 0
+
+
 # ---------------------------------------------------------------------------
 # File scanning
 # ---------------------------------------------------------------------------
