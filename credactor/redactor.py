@@ -308,6 +308,24 @@ def batch_replace_in_file(
             lines[idx] = original.replace(full_value, replacement, 1)
         replaced += 1
 
+    # H10: the per-finding replace handles one occurrence each. If the same
+    # secret value also appears uncredited elsewhere on the line (a trailing
+    # comment, or a second non-credential variable), those copies would survive.
+    # Sweep every touched line and replace any remaining exact copy of a redacted
+    # value with the sentinel, so no secret literal is ever left behind.
+    if replaced:
+        stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
+                 else config.custom_replacement)
+        values_by_line: dict[int, set[str]] = {}
+        for finding in file_findings:
+            values_by_line.setdefault(finding['line'] - 1, set()).add(finding['full_value'])
+        for idx, values in values_by_line.items():
+            if idx >= len(lines):
+                continue
+            for value in values:
+                if value in lines[idx]:
+                    lines[idx] = lines[idx].replace(value, stray)
+
     # Atomic write: write to temp file, then rename over original.
     # Prevents corruption if process crashes mid-write.
     dir_name = os.path.dirname(filepath) or '.'

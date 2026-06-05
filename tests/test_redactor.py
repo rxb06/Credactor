@@ -199,6 +199,48 @@ class TestEnvVarReplacement:
         compile(out, 'sent2.py', 'exec')
 
 
+class TestNoLeakOnRepeatedValue:
+    """H10: when the same secret value appears more than once on a line but
+    scans to a single finding, no copy may survive the redaction."""
+
+    _SECRET = 'r4nd0mSecretVal9876'
+
+    def test_repeated_value_fully_removed(self, make_file):
+        # one finding (only api_key is a credential var), but the value is also
+        # in a second, non-credential variable on the same line
+        config = Config(no_backup=True, replace_mode='sentinel')
+        path = make_file('dup.py', f'api_key = "{self._SECRET}"; note = "{self._SECRET}"\n')
+        batch_replace_in_file(path, [_mk_finding(path, self._SECRET)], config)
+        with open(path) as f:
+            out = f.read()
+        assert self._SECRET not in out
+        compile(out, 'dup.py', 'exec')
+
+    def test_env_mode_primary_keeps_ref_stray_sentinelled(self, make_file):
+        config = Config(no_backup=True, replace_mode='env')
+        path = make_file('dupe.py', f'api_key = "{self._SECRET}"; note = "{self._SECRET}"\n')
+        batch_replace_in_file(path, [_mk_finding(path, self._SECRET)], config)
+        with open(path) as f:
+            out = f.read()
+        assert self._SECRET not in out
+        assert 'os.environ["API_KEY"]' in out   # primary kept the env ref
+        compile(out, 'dupe.py', 'exec')
+
+    def test_distinct_values_both_replaced(self, make_file):
+        # the sweep must not interfere with the normal two-findings case
+        s1, s2 = 'aaa1bbb2ccc3ddd4', 'zzz9yyy8xxx7www6'
+        config = Config(no_backup=True, replace_mode='sentinel')
+        path = make_file('two.py', f'api_key = "{s1}"; token = "{s2}"\n')
+        batch_replace_in_file(
+            path,
+            [_mk_finding(path, s1), _mk_finding(path, s2, 'variable:token')],
+            config,
+        )
+        with open(path) as f:
+            out = f.read()
+        assert s1 not in out and s2 not in out
+
+
 class TestDeriveEnvVarName:
     def test_variable_type(self):
         assert _derive_env_var_name({'type': 'variable:api_key'}) == 'API_KEY'
