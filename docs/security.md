@@ -103,7 +103,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 
 See `mydocs/vulnerability-chains.md` for the full chain analysis including attack narratives, scope, and false positives investigated.
 
-### Unreleased (Phase 1–3 hardening + external ingestion)
+### v2.4.0 (Phase 1–3 hardening + external ingestion)
 
 **External-scanner ingestion (BETA) — `credactor/ingest.py`:**
 
@@ -122,7 +122,7 @@ See `mydocs/vulnerability-chains.md` for the full chain analysis including attac
 - **Config-input hardening (extends SEC-38)** — malformed list/table config shapes warn-and-skip instead of crashing or char-splitting a string value.
 - **Suppression visibility** — value-literal and positional `file:line` suppressions warn at load time (the latter matches by line number only and can be defeated by line drift), and overly broad globs are flagged (`fnmatch` has no globstar, so `**` behaves as `*`). `.credactorignore` gains a `value:<literal>` prefix for values containing glob metacharacters.
 
-This hardening is on the development branch and ships in the next release (Python 3.11+, stdlib `tomllib`); it is not in the released 2.3.3.
+This hardening ships in **2.4.0** (the develop branch is entirely the 2.4.0 work; Python 3.11+, uses stdlib `tomllib`).
 
 ## Supply Chain Hardening
 
