@@ -29,8 +29,14 @@ def _make_replacement(
     finding: Finding,
     config: Config,
     filepath: str,
-) -> str:
-    """Produce the replacement string for a credential finding.
+) -> tuple[str, bool]:
+    """Produce the replacement string and whether it consumes the source quotes.
+
+    Returns ``(replacement, takes_quotes)``. ``takes_quotes`` is True only for a
+    bare env expression (e.g. ``os.environ["X"]``) that would be left nested
+    inside the original quotes if it merely replaced the bare value; it is False
+    for ``${X}`` interpolations (shell/YAML belong inside the quotes), the
+    sentinel fallback, and sentinel/custom modes (which stay quoted).
 
     Modes (config.replace_mode):
       - 'env':                 language-aware env var reference
@@ -46,10 +52,13 @@ def _make_replacement(
         # intentionally contains shell metacharacters like ${} for
         # shell/YAML/config files).
         if _UNSAFE_REPLACEMENT_RE.search(var_name):
-            return 'REDACTED_BY_CREDACTOR'
-        return _env_ref_for_language(var_name, ext)
+            return 'REDACTED_BY_CREDACTOR', False
+        ref = _env_ref_for_language(var_name, ext)
+        # ${X} interpolations stay inside the source quotes; bare expressions
+        # (os.environ[...], process.env[...], ...) replace the quoted literal.
+        return ref, not ref.startswith('${')
 
-    return config.custom_replacement
+    return config.custom_replacement, False
 
 
 def _derive_env_var_name(finding: Finding) -> str:
@@ -100,6 +109,32 @@ def _env_ref_for_language(var_name: str, ext: str) -> str:
         return f'${{{var_name}}}'
     # Fallback
     return f'${{{var_name}}}'
+
+
+def _replace_quoted(original: str, full_value: str, replacement: str) -> str:
+    """Insert a bare env expression in place of a *quoted* credential literal,
+    consuming the surrounding quotes so it isn't left nested inside them
+    (api_key = "os.environ[...]" would be invalid syntax).
+
+    When the value is not a standalone quoted literal — e.g. a secret embedded
+    in a larger string such as a Bearer header or a connection URL — a bare
+    expression cannot be inserted without breaking the surrounding quotes, so
+    the secret is replaced with the sentinel instead (always valid).
+    """
+    for q in ('"', "'"):
+        token = f'{q}{full_value}{q}'
+        if token in original:
+            other = '"' if q == "'" else "'"
+            # If the bare expression carries `other`-quotes and the matched
+            # token is itself nested inside an enclosing `other`-quoted literal
+            # (so `other` still appears once the token is removed), inlining the
+            # expression would break that outer string — e.g.
+            # auth = "Bearer 'KEY'"  ->  auth = "Bearer os.environ["X"]".
+            # Fall back to the sentinel, which is always valid.
+            if other in replacement and other in original.replace(token, '', 1):
+                break
+            return original.replace(token, replacement, 1)
+    return original.replace(full_value, 'REDACTED_BY_CREDACTOR', 1)
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +301,11 @@ def batch_replace_in_file(
             failed += 1
             continue
 
-        replacement = _make_replacement(finding, config, filepath)
-        lines[idx] = original.replace(full_value, replacement, 1)
+        replacement, takes_quotes = _make_replacement(finding, config, filepath)
+        if takes_quotes:
+            lines[idx] = _replace_quoted(original, full_value, replacement)
+        else:
+            lines[idx] = original.replace(full_value, replacement, 1)
         replaced += 1
 
     # Atomic write: write to temp file, then rename over original.

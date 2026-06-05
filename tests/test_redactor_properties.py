@@ -5,11 +5,9 @@ languages: the secret is removed, the .bak round-trips, nothing outside the
 replaced span changes, no temp file leaks, permissions are preserved, redaction
 is idempotent, and multiple secrets are all removed.
 
-Invariant #2 (env-mode output is syntactically valid / the replacement is not
-wrapped in the original quotes) is finding **H2** and is expected to FAIL today;
-it is marked ``xfail(strict=True)`` so the suite stays green now and the test
-becomes a hard regression gate the moment H2 is fixed (xpass -> failure ->
-remove the marker).
+Invariant #2 (env-mode output is syntactically valid — the replacement is not
+wrapped in the original quotes) was finding **H2**, now fixed; the test is a
+live regression gate.
 
 Secrets are constructed at runtime (no literals) so this module stays clean
 under credactor's own self-scan.
@@ -130,14 +128,11 @@ def test_multiplicity(tmp_path):
         assert s not in text, f'secret survived redaction: {s[:8]}…'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='H2: env redaction wraps the env ref in the original quotes '
-                          '-> invalid syntax. Remove this marker when H2 lands.')
 def test_env_mode_output_is_valid_python(tmp_path):
-    """#2 — env-mode output must be syntactically valid (replacement not nested
-    inside the original quotes). Expected to FAIL until H2 is fixed."""
+    """#2 — env-mode output must be syntactically valid: the env reference
+    replaces the quoted literal instead of nesting inside the source quotes."""
     s = _secret()
     p, findings, replaced, failed, bak = _redact(
         tmp_path, 'app.py', f'api_key = "{s}"\n', mode='env')
     assert replaced == 1
-    compile(p.read_text(encoding='utf-8'), 'app.py', 'exec')  # SyntaxError today (H2)
+    compile(p.read_text(encoding='utf-8'), 'app.py', 'exec')  # H2: valid syntax

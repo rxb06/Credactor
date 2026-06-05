@@ -13,6 +13,11 @@ _AWS_KEY = 'AKIA' + 'IOSFODNN7EXAMPLE'
 _PASSWORD = 'xK9#mL2' + '$vQ7@nR5'
 
 
+def _mk_finding(path, value, ftype='variable:api_key', line=1):
+    return {'file': path, 'line': line, 'type': ftype, 'severity': 'high',
+            'full_value': value, 'value_preview': '', 'raw': ''}
+
+
 class TestBackup:
     def test_backup_created(self, make_file):
         config = Config(no_backup=False)
@@ -93,27 +98,105 @@ class TestBatchReplace:
 
 
 class TestEnvVarReplacement:
-    def test_python_env_ref(self, make_file):
+    """H2: env-mode replacement must emit syntactically valid code — the env
+    reference replaces the quoted literal, never nests inside the source quotes.
+
+    Assertions check the FULL line (the prior substring checks passed on the
+    broken nested-quote output, which is why the bug shipped).
+    """
+
+    _SECRET = 'mysecretkey123456'
+
+    def _redact_env(self, make_file, name, content, value=None,
+                    ftype='variable:api_key'):
         config = Config(no_backup=True, replace_mode='env')
-        path = make_file('envtest.py', 'api_key = "mysecretkey123456"\n')
-        finding = {'file': path, 'line': 1, 'type': 'variable:api_key',
-                   'severity': 'high', 'full_value': 'mysecretkey123456',
-                   'value_preview': '', 'raw': ''}
+        path = make_file(name, content)
+        finding = _mk_finding(path, value or self._SECRET, ftype)
         batch_replace_in_file(path, [finding], config)
         with open(path) as f:
-            content = f.read()
-        assert 'os.environ["API_KEY"]' in content
+            return f.read()
+
+    def test_python_env_ref(self, make_file):
+        out = self._redact_env(make_file, 'envtest.py',
+                               'api_key = "mysecretkey123456"\n')
+        assert out == 'api_key = os.environ["API_KEY"]\n'
+        compile(out, 'envtest.py', 'exec')   # H2: must be valid Python
+
+    def test_python_env_ref_single_quote_source(self, make_file):
+        # a single-quoted source must also have its quotes consumed, else the
+        # env ref becomes a string literal instead of a lookup
+        out = self._redact_env(make_file, 'sq.py',
+                               "api_key = 'mysecretkey123456'\n")
+        assert out == 'api_key = os.environ["API_KEY"]\n'
+        compile(out, 'sq.py', 'exec')
 
     def test_js_env_ref(self, make_file):
-        config = Config(no_backup=True, replace_mode='env')
-        path = make_file('envtest.js', 'const api_key = "mysecretkey123456";\n')
-        finding = {'file': path, 'line': 1, 'type': 'variable:api_key',
-                   'severity': 'high', 'full_value': 'mysecretkey123456',
-                   'value_preview': '', 'raw': ''}
-        batch_replace_in_file(path, [finding], config)
+        out = self._redact_env(make_file, 'envtest.js',
+                               'const api_key = "mysecretkey123456";\n')
+        assert out == 'const api_key = process.env["API_KEY"];\n'
+
+    def test_ruby_env_ref(self, make_file):
+        out = self._redact_env(make_file, 'app.rb',
+                               'api_key = "mysecretkey123456"\n')
+        assert out == "api_key = ENV['API_KEY']\n"
+
+    def test_go_env_ref(self, make_file):
+        out = self._redact_env(make_file, 'app.go',
+                               'var api_key = "mysecretkey123456"\n')
+        assert out == 'var api_key = os.Getenv("API_KEY")\n'
+
+    def test_java_env_ref(self, make_file):
+        out = self._redact_env(make_file, 'App.java',
+                               'String api_key = "mysecretkey123456";\n')
+        assert out == 'String api_key = System.getenv("API_KEY");\n'
+
+    def test_php_env_ref(self, make_file):
+        out = self._redact_env(make_file, 'app.php',
+                               '$api_key = "mysecretkey123456";\n')
+        assert out == "$api_key = getenv('API_KEY');\n"
+
+    def test_embedded_secret_uses_sentinel(self, make_file):
+        # a secret inside a LARGER quoted literal (Bearer header / URL) cannot
+        # host a bare env ref without nesting quotes, so the sentinel is used
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        out = self._redact_env(make_file, 'embed.py', f'auth = "Bearer {key}"\n',
+                               value=key, ftype='pattern:AWS access key')
+        assert out == 'auth = "Bearer REDACTED_BY_CREDACTOR"\n'
+        assert key not in out
+        compile(out, 'embed.py', 'exec')
+
+    def test_nested_quote_embedded_uses_sentinel(self, make_file):
+        # a pattern secret SINGLE-quoted inside a DOUBLE-quoted string: inlining a
+        # "-bearing env ref (os.environ["X"]) would break the outer string, so the
+        # sentinel is used instead — output must stay valid and secret-free
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        out = self._redact_env(make_file, 'nested.py', f'auth = "Bearer \'{key}\'"\n',
+                               value=key, ftype='pattern:AWS access key')
+        assert out == 'auth = "Bearer \'REDACTED_BY_CREDACTOR\'"\n'
+        assert key not in out
+        compile(out, 'nested.py', 'exec')
+
+    # --- guard cases: behaviour that must NOT change ---
+    def test_shell_env_ref_stays_quoted(self, make_file):
+        out = self._redact_env(make_file, 'app.sh',
+                               'API_KEY="mysecretkey123456"\n',
+                               ftype='variable:API_KEY')
+        assert out == 'API_KEY="${API_KEY}"\n'
+
+    def test_yaml_unquoted_env_ref(self, make_file):
+        out = self._redact_env(make_file, 'app.yaml',
+                               'api_key: mysecretkey123456\n')
+        assert out == 'api_key: ${API_KEY}\n'
+
+    def test_sentinel_mode_keeps_quotes(self, make_file):
+        config = Config(no_backup=True, replace_mode='sentinel',
+                        custom_replacement='REDACTED_BY_CREDACTOR')
+        path = make_file('sent2.py', 'api_key = "mysecretkey123456"\n')
+        batch_replace_in_file(path, [_mk_finding(path, 'mysecretkey123456')], config)
         with open(path) as f:
-            content = f.read()
-        assert 'process.env["API_KEY"]' in content
+            out = f.read()
+        assert out == 'api_key = "REDACTED_BY_CREDACTOR"\n'
+        compile(out, 'sent2.py', 'exec')
 
 
 class TestDeriveEnvVarName:
