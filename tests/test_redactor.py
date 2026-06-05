@@ -226,6 +226,19 @@ class TestNoLeakOnRepeatedValue:
         assert 'os.environ["API_KEY"]' in out   # primary kept the env ref
         compile(out, 'dupe.py', 'exec')
 
+    def test_sweep_skips_substring_of_larger_token(self, make_file):
+        # the secret value is also a substring of an adjacent numeric literal —
+        # the sweep must redact the credential but NOT corrupt the other token
+        config = Config(no_backup=True, replace_mode='sentinel')
+        path = make_file('emb.py', 'db_password = "12345678"; timeout = 123456789\n')
+        batch_replace_in_file(
+            path, [_mk_finding(path, '12345678', 'variable:db_password')], config)
+        with open(path) as f:
+            out = f.read()
+        assert '"12345678"' not in out          # the credential literal is gone
+        assert 'timeout = 123456789' in out      # the adjacent number is untouched
+        compile(out, 'emb.py', 'exec')
+
     def test_distinct_values_both_replaced(self, make_file):
         # the sweep must not interfere with the normal two-findings case
         s1, s2 = 'aaa1bbb2ccc3ddd4', 'zzz9yyy8xxx7www6'

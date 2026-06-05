@@ -209,15 +209,23 @@ class TestSecretFamilyVars:
         findings = scan_line(1, f'auth_secret = "{self._SECRET}"', 'test.py', config=config)
         assert len(findings) == 1
 
+    def test_compound_secret_vars_detected(self, config):
+        # common *_secret names must match (the bare `\bsecret\b` alone never
+        # matched after an underscore)
+        for var in ('jwt_secret', 'my_secret', 'user_secret'):
+            findings = scan_line(1, f'{var} = "{self._SECRET}"', 'test.py', config=config)
+            assert len(findings) == 1, var
+
     def test_vault_reference_not_flagged(self, config):
         # adding bare `secret` must not flag a Vault reference (a dynamic lookup)
         findings = scan_line(1, 'secret = "vault:secret/data/app"', 'test.py', config=config)
         assert len(findings) == 0
 
-    def test_secretary_not_matched(self, config):
-        # bare `secret` must not match inside `secretary` (word boundary)
-        findings = scan_line(1, f'secretary = "{self._SECRET}"', 'test.py', config=config)
-        assert len(findings) == 0
+    def test_secretary_and_secrets_not_matched(self, config):
+        # the secret-family pattern must not match `secretary` or `secrets`
+        for var in ('secretary', 'secrets'):
+            findings = scan_line(1, f'{var} = "{self._SECRET}"', 'test.py', config=config)
+            assert len(findings) == 0, var
 
 
 # ---------------------------------------------------------------------------

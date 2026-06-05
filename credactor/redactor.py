@@ -324,7 +324,13 @@ def batch_replace_in_file(
                 continue
             for value in values:
                 if value in lines[idx]:
-                    lines[idx] = lines[idx].replace(value, stray)
+                    # Replace only standalone copies (bounded by non-word
+                    # characters, e.g. a quoted literal) — never a substring of a
+                    # longer token like 123456789, which would corrupt unrelated
+                    # code. The replacement is a function so a custom replacement
+                    # string is inserted literally, not as a regex template.
+                    lines[idx] = re.sub(rf'(?<!\w){re.escape(value)}(?!\w)',
+                                        lambda _m: stray, lines[idx])
 
     # Atomic write: write to temp file, then rename over original.
     # Prevents corruption if process crashes mid-write.

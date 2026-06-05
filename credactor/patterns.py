@@ -96,7 +96,7 @@ CRED_VAR_PATTERNS = re.compile(
     r'api[_\-]?key|apikey|api[_\-]?token|'
     r'auth[_\-]?token|access[_\-]?token|bearer[_\-]?token|'
     r'client[_\-]?secret|secret[_\-]?key|app[_\-]?secret|'
-    r'api[_\-]?secret|auth[_\-]?secret|secret|'
+    r'(?:\w+[_\-])?secret(?:[_\-]\w+)?|'
     r'private[_\-]?key|signing[_\-]?key|'
     r'password|passwd|passphrase|pwd|'
     r'access[_\-]?key|access[_\-]?id|secret[_\-]?id|'
