@@ -10,6 +10,7 @@ Credactor is a static analysis tool that uses regex patterns and entropy heurist
 - Not a runtime security tool — it scans files at rest, not live applications
 - Not a compliance certification tool
 - Not guaranteed to catch every credential format or encoding
+- Not a verifier — it does not check whether a detected value is a live, active credential (a finding may be expired, rotated, revoked, or a non-secret look-alike)
 
 ## Limitations
 
@@ -20,6 +21,7 @@ Credactor is a static analysis tool that uses regex patterns and entropy heurist
 - **No cross-file tracking.** A credential split across two files (e.g. key in one, secret in another) is not detected.
 - **Entropy thresholds are tunable, not perfect.** Lowering them catches more but increases false positives. The defaults balance precision and recall for common codebases.
 - **No semantic analysis.** The tool does not understand code execution flow. A credential constructed at runtime from multiple variables will not be detected.
+- **External-scanner ingestion is BETA.** `--from-gitleaks` / `--from-trufflehog` ingest a third-party report as **untrusted input**; ingested findings are best-effort and should be reviewed especially carefully before redaction.
 
 ### Redaction
 
@@ -42,6 +44,8 @@ Always run `--dry-run` first and review findings before redacting. Use `.credact
 
 ### False Negatives
 
+**A run with no findings is not proof the code is secret-free.** It means only that nothing matched Credactor's patterns and heuristics — not that no secrets exist. Do not treat a clean scan as a security sign-off. Secrets are missed in cases such as:
+
 - Credentials in formats not covered by built-in patterns.
 - Credentials below the entropy threshold.
 - Values shorter than the minimum length (default 8 characters).
@@ -62,7 +66,7 @@ Always run `--dry-run` first and review findings before redacting. Use `.credact
 
 This software is provided "as is" under the Apache 2.0 licence, without warranty of any kind. See [LICENSE](../LICENSE) for the full terms.
 
-The authors are not liable for:
+The authors are not liable for, including without limitation:
 
 - Credentials missed by the scanner
 - Code broken by replacements
