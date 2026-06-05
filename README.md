@@ -90,7 +90,7 @@ python -m credactor .
 - Inline `# credactor:ignore` suppression and `.credactorignore` allowlists
 - Per-repo config via `.credactor.toml`
 - Parallel scanning (8 workers) for large repos
-- SARIF 2.1.0 output with column-level annotations for GitHub Code Scanning
+- SARIF 2.1.0 output with column-level annotations for GitHub Code Scanning ([details](docs/user-guide.md#sarif))
 - `--fail-on-error` to catch files that couldn't be scanned
 
 ## Scanned File Types
