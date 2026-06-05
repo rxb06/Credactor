@@ -178,6 +178,15 @@ class TestStagedScanning:
         assert len(findings) >= 1
         assert errored == []
 
+    def test_bails_when_toplevel_unresolvable(self, tmp_dir):
+        # if rev-parse can't resolve the repo root, staged paths can't be placed
+        # safely, so the scan bails — never falls back to a wrong base path
+        fake = mock.Mock(returncode=128, stdout='', stderr='fatal: not a git repo')
+        with mock.patch('credactor.walker.subprocess.run', return_value=fake):
+            findings, errored = scan_staged_files(tmp_dir, Config(no_color=True))
+        assert findings == []
+        assert errored == []
+
     def test_ignores_unstaged_worktree_secret(self, tmp_dir):
         repo = self._init_repo(tmp_dir)
         path = os.path.join(repo, 'app.py')

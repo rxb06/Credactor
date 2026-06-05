@@ -202,6 +202,18 @@ def scan_staged_files(
     """
     root_path = Path(root).resolve()
     try:
+        # `git diff --cached` lists paths relative to the repo root, so resolve
+        # them against the toplevel, not the scan root (which may be a
+        # subdirectory). Resolve it up front: without a valid toplevel a staged
+        # path can't be placed correctly, so a failure here is fatal rather than
+        # falling back to root_path (which would re-double subdirectory paths).
+        top = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            capture_output=True, text=True, cwd=str(root_path), timeout=30,
+        )
+        if top.returncode != 0:
+            logger.error('git rev-parse failed: %s', top.stderr.strip())
+            return [], []
         result = subprocess.run(
             ['git', 'diff', '--cached', '--name-only', '-z', '--diff-filter=ACMR'],
             capture_output=True, text=True, cwd=str(root_path), timeout=30,
@@ -209,20 +221,13 @@ def scan_staged_files(
         if result.returncode != 0:
             logger.error('git diff failed: %s', result.stderr.strip())
             return [], []
-        # `git diff --cached` lists paths relative to the repo root; resolve them
-        # against the toplevel, not the scan root, which may be a subdirectory
-        # (resolving against a subdir doubled the path and defeated is_within_root).
-        top = subprocess.run(
-            ['git', 'rev-parse', '--show-toplevel'],
-            capture_output=True, text=True, cwd=str(root_path), timeout=30,
-        )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         logger.error('Cannot run git: %s', exc)
         return [], []
+    toplevel = Path(top.stdout.strip())
     # -z yields NUL-separated, unquoted paths: a unicode/special-char filename
     # would otherwise be octal-quoted and silently skipped (a staged-secret miss).
     raw_staged = [p for p in result.stdout.split('\0') if p]
-    toplevel = Path(top.stdout.strip()) if top.returncode == 0 else root_path
 
     # Warn if suppression/config files are staged alongside code — a malicious
     # contributor could stage .credactor.toml or .credactorignore changes to
