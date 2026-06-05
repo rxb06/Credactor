@@ -84,9 +84,11 @@ python -m credactor .
 | Private keys | PEM blocks (`-----BEGIN RSA PRIVATE KEY-----`) | Critical |
 | JWT tokens | `eyJ...` three-segment tokens | High |
 | Connection strings | `postgresql://user:pass@host`, `mongodb+srv://...`, `redis://...` | High |
-| Variable assignments | `password = "..."`, `api_key = "..."`, `db_password = "..."` | High/Medium |
+| Variable assignments | `password = "..."`, `api_key = "..."`, `db_password = "..."` | High/Medium/Low |
 | XML attributes | `<add key="Password" value="..." />` | High |
 | High-entropy strings | Hex (32-64 chars), Base64 (60+ chars) | Medium/Low |
+
+Standalone high-entropy hex/Base64 strings are only flagged when quoted; unquoted values are caught only when assigned to a credential-named variable (this intentionally filters out unquoted git SHAs and checksums). ID-type credential variables (`client_id`, `tenant_id`, `app_id`) are Low severity.
 
 ## Features
 

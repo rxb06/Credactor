@@ -23,7 +23,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 | Source files being scanned | Untrusted | May contain adversarial content; regex patterns are hardened against ReDoS |
 | `.credactor.toml` config | Semi-trusted | Can adjust thresholds and safe-values; traversal limited to 5 parent dirs; an implicitly-discovered config outside the project root is refused (an explicit `--config` outside the root is honored, with a warning, only in non-CI) |
 | `.credactorignore` | Semi-trusted | Can suppress findings for specific files, lines, or values |
-| External scanner report (`--from-gitleaks` / `--from-trufflehog`, `[ingest]`) | Untrusted | Names on-disk files Credactor will redact; paths are normalised and confined to the target directory (traversal rejected), the report file itself is skipped (self-corruption guard), missing/invalid paths are dropped, and the report is size- and count-capped before parsing to bound memory |
+| External scanner report (`--from-gitleaks` / `--from-trufflehog`, `[ingest]`) | Untrusted | Names on-disk files Credactor will redact; paths are normalised and confined to the target directory (traversal rejected), the report file itself is skipped (self-corruption guard), missing/invalid paths are dropped, and the report is size-capped before parsing and finding-count-capped after parsing to bound memory |
 | CLI arguments | Trusted | Provided by the developer running the tool |
 | Git history (`--scan-history`) | Untrusted | Parses `git log -p` output; input is sanitised |
 
@@ -56,7 +56,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 - **SEC-12** — Config injection bounds validation: `entropy_threshold` clamped to 0.0–6.0 and `min_value_length` to 1–200.
 - **SEC-13** — Wildcard `.credactorignore` warning: Overly broad patterns trigger a `[WARN]`.
 - **SEC-14** — `--replace-with env` semantic change warning.
-- **SEC-15** — TOCTOU file locking: Advisory `fcntl.flock()` lock held through atomic replacement.
+- **SEC-15** — Best-effort advisory file lock (`fcntl.flock(LOCK_EX|LOCK_NB)`) attempted before the read-modify-write; on lock contention it proceeds unlocked, so it is a courtesy marker, not a hard TOCTOU guarantee.
 - **SEC-16** — Terminal escape sequence sanitisation.
 - **SEC-17** — NFS/network mount warning.
 - **SEC-18** — Root user warning.
@@ -68,7 +68,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 ### v2.2.2
 
 - **SEC-23** — File symlink boundary enforcement: File symlinks resolving outside the scan root are skipped.
-- **SEC-24** — SARIF output sanitisation: HTML-escaped via `html.escape()`.
+- **SEC-24** — SARIF output: `json.dumps` provides the injection safety; the masked preview in `message.text` is additionally HTML-escaped as defence-in-depth.
 - **SEC-25** — Git history path traversal guard: Paths with `..` traversal sequences are rejected.
 
 ### v2.3.0
@@ -97,7 +97,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 
 - **SEC-35** — SARIF output injection: HTML-escape the finding type in all SARIF rule fields (`id`, `shortDescription`, `fullDescription`) and the masked preview in the result message. Prevents XSS via attacker-controlled XML attribute names in downstream SARIF viewers. The whole document is JSON-encoded and only a short preview (first 4 chars + the literal `[REDACTED]`) ever appears; `artifactLocation.uri` is intentionally **not** HTML-escaped (it is a filesystem path consumed as data, not rendered as HTML).
 - **SEC-36** — Terminal escape injection: Apply `sanitize_for_terminal()` to file paths, finding types, and raw source lines in text report output. Prevents ANSI escape-sequence injection via crafted filenames or source content.
-- **SEC-37** — Bare `$` prefix bypass: Validate that text after `$` matches POSIX env var name syntax (`[A-Za-z_][A-Za-z0-9_]*`). Prevents suppressing credentials by prefixing with `$`.
+- **SEC-37** — Bare `$` prefix: reject `$` followed by a non-identifier character (`$/path`, `$+foo`, `$123abc`) so those aren't treated as env refs. A `$` followed by a valid identifier (`$VARNAME`) is still treated as an env reference by design — it cannot be distinguished from a real env var, so this does not stop a secret deliberately written as `$IDENTIFIER` (consistent with "not a security boundary").
 - **SEC-38** — Config type confusion: Wrap `float()`/`int()` conversions in `apply_config_file()` with try/except. Prevents scan crash (DoS) from malformed `.credactor.toml` values.
 - **SEC-39** — Config trust boundary (non-git): When no `.git` directory exists, fall back to comparing config location against the scan root. Prevents silent config loading from parent directories on non-git repos.
 
@@ -107,8 +107,8 @@ See `mydocs/vulnerability-chains.md` for the full chain analysis including attac
 
 **External-scanner ingestion (BETA) — `credactor/ingest.py`:**
 
-- **SEC-40a/b/c** — Ingested Gitleaks/TruffleHog reports are treated as untrusted: each report file path is `normpath`+`resolve`d against the target and rejected if it escapes the target directory; a path equal to the report file itself is skipped (self-corruption guard); a missing-on-disk file is dropped; an embedded NUL or otherwise invalid path is skipped per-finding rather than aborting the batch. Reports are size-capped before parsing and finding-count-capped to bound memory, and non-UTF-8 (`U+FFFD`) secret fields are skipped.
-- **Dedup severity merge** — native and external findings are deduplicated; on a duplicate the higher severity is kept, so a TruffleHog `Verified` (critical) duplicate cannot silently downgrade the survivor. Ingested findings still pass through `.credactorignore` suppression.
+- **SEC-40a/b/c** — Ingested Gitleaks/TruffleHog reports are treated as untrusted: each report file path is `normpath`+`resolve`d against the target and rejected if it escapes the target directory; a path equal to the report file itself is skipped (self-corruption guard); a missing-on-disk file is dropped; an embedded NUL or otherwise invalid path is skipped per-finding rather than aborting the batch. Reports are size-capped before parsing (bounding peak parse memory) and finding-count-capped after parsing, and non-UTF-8 (`U+FFFD`) secret fields are skipped.
+- **Dedup severity merge** — native and external findings are deduplicated; on a duplicate at the same location, value, and commit context, the higher severity is kept, so a working-tree TruffleHog `Verified` (critical) duplicate does not downgrade the survivor. (Findings that differ only by commit are resolved by the working-tree-beats-committed rule, without a severity merge.) Ingested findings still pass through `.credactorignore` suppression.
 - **Directory-target enforcement** — `--from-gitleaks` / `--from-trufflehog` exit 2 on a file target, a missing report, or when combined with `--scan-history`.
 
 **CLI / config / suppression / backup:**

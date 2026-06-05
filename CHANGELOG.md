@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **External-scanner ingestion (BETA).** New `--from-gitleaks FILE` and
   `--from-trufflehog FILE` flags ingest findings from a Gitleaks JSON report or
   a TruffleHog NDJSON file and merge them into the redaction pipeline. Ingested
-  findings are deduplicated against native findings; on a true duplicate the
-  higher severity is kept (so an external `Verified` critical is not silently
-  downgraded). Both flags require a **directory** target so report-relative paths
+  findings are deduplicated against native findings; on a duplicate at the same
+  location, value, and commit context the higher severity is kept (so a
+  working-tree external `Verified` critical is not downgraded; findings differing
+  only by commit are resolved working-tree-over-committed without a severity
+  merge). Both flags require a **directory** target so report-relative paths
   resolve, and cannot be combined with `--scan-history`. The same paths can be
   set via an `[ingest]` table in `.credactor.toml` (`from_gitleaks` /
   `from_trufflehog`).
@@ -63,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redaction leak fix:** when the same secret value appeared more than once on
   a line but scanned to a single finding, an extra copy could be left in
   plaintext while the run reported success. A post-replacement sweep now removes
-  any surviving copy of a redacted value.
+  any surviving standalone copy of a redacted value (bounded by non-word
+  characters, so an adjacent longer token is never corrupted).
 - **Replacement-string hardening:** a custom `--replacement` (or config
   `replacement`) is validated against an allowlist (`[A-Za-z0-9_-]`), rejecting
   shell/markup/quote metacharacters, newlines, and control characters that could

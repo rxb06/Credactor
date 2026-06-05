@@ -4,8 +4,8 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 2.4.x   | :white_check_mark: |
-| < 2.4   | :x:                |
+| 2.3.x   | :white_check_mark: |
+| < 2.3   | :x:                |
 
 Only the latest minor release receives security patches. We recommend always running the most recent version.
 
@@ -95,7 +95,7 @@ If an ID has multiple sites, the first is the primary defence; the rest are prop
 | SEC-13 | Warn on overly broad `.credactorignore` patterns (`*`, `**`, `**/*`) | `suppressions.py:59` |
 | SEC-13b | Warn on extension-targeting wildcards covering scannable types (e.g. `**/*.py`) | `suppressions.py:64` |
 | SEC-14 | Warn that `--replace-with env` changes string literals to function calls | `cli.py:295` |
-| SEC-15 | Advisory file lock (`fcntl.LOCK_EX\|LOCK_NB`) mitigates read-vs-replace TOCTOU | `redactor.py:215,244,313` |
+| SEC-15 | Best-effort advisory file lock (`fcntl.LOCK_EX\|LOCK_NB`) attempted before read-modify-write; **proceeds unlocked on contention**, so it is a courtesy marker, not a hard TOCTOU guarantee | `redactor.py:215,244,313` |
 | SEC-16 | Strip ANSI escapes and control chars from terminal output to prevent injection | `utils.py:88,96`, `redactor.py:369` |
 | SEC-17 | Warn when target appears to be on a mounted/network volume (NFS/SMB atomicity) | `cli.py` (`_print_banner`) |
 | SEC-18 | Warn when running as root (Unix only) — backup ownership concerns | `cli.py:289` |
@@ -114,9 +114,9 @@ If an ID has multiple sites, the first is the primary defence; the rest are prop
 | SEC-32 | Reject staged paths with `..` components (component-wise, not substring) | `walker.py:260` |
 | SEC-33 | Cross-platform path-containment: normpath + os.sep boundary + normcase | `utils.py:82` (`is_within_root`), `config.py:113` |
 | SEC-34 | Brace-syntax env-ref safe value requires matching closing delimiters | `scanner.py:109` |
-| SEC-35 | HTML-escape finding type in all SARIF rule fields (XSS via XML attribute names) | `report.py:153` |
+| SEC-35 | JSON-encoding (`json.dumps`) provides the SARIF injection safety; finding type in rule fields is additionally HTML-escaped as defence-in-depth (SARIF fields are plain text, so most consumers render them as text) | `report.py:153` |
 | SEC-36 | Sanitise file paths, finding types, raw source lines in text report output | `report.py:86,98` |
-| SEC-37 | Validate POSIX env-var name syntax after `$` to prevent credential suppression | `scanner.py:117` |
+| SEC-37 | Reject `$` followed by a non-identifier character (`$/path`, `$+foo`, `$123abc`) so those aren't mistaken for env refs; a `$` + valid identifier (`$VARNAME`) is still treated as an env reference by design (cannot be distinguished from a real env var) | `scanner.py:117` |
 | SEC-38 | Guard `float()`/`int()` conversions in `apply_config_file` against type confusion | `config.py:170,184` |
 | SEC-39 | Fall back to scan root when no `.git` ancestor; warn (do not silently load) | `config.py:125` |
 | SEC-40 | Top-level `--scan-history` vs ingest mutual exclusion; ingest is stdlib-json only | `cli.py:262`, `ingest.py:3` |

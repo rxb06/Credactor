@@ -142,7 +142,7 @@ credactor --replace-with custom --replacement "TODO_REPLACE_ME"
 | Private keys | PEM blocks (`-----BEGIN RSA PRIVATE KEY-----`) | Critical |
 | JWT tokens | `eyJ...` three-segment tokens | High |
 | Connection strings | `postgresql://user:pass@host`, `mongodb+srv://...` | High |
-| Variable assignments | `password = "..."`, `api_key = "..."` | High/Medium |
+| Variable assignments | `password = "..."`, `api_key = "..."` | High/Medium/Low |
 | XML attributes | `<add key="Password" value="..." />` | High |
 | High-entropy strings | Hex (32–64 chars), Base64 (60+ chars) | Medium/Low |
 
@@ -153,9 +153,9 @@ credactor --replace-with custom --replacement "TODO_REPLACE_ME"
 | Critical | Red | Deterministic match — provider prefix, PEM key. Near-zero false positives. |
 | High | Red | Strong match — JWT, connection string, high-entropy password variable. |
 | Medium | Yellow | Heuristic — hex string, Stripe test key, generic credential variable. |
-| Low | Cyan | Weak heuristic — long Base64. Higher false positive rate. |
+| Low | Cyan | Weak heuristic — long Base64, or low-value ID variables (`client_id`, `tenant_id`, `app_id`). Higher false positive rate. |
 
-**Entropy model.** Deterministic provider prefixes (AWS `AKIA…`, GCP `AIza…`, Stripe live `sk_live_…`, GitHub `ghp_`/`github_pat_`, GitLab `glpat-`, Slack `xox…`, npm `npm_`, PyPI `pypi-`) and PEM private-key blocks are matched **with no entropy floor** — they're unambiguous, so they're flagged regardless of randomness (a format-valid placeholder will also flag — suppress it via `.credactorignore`). Entropy-gated detectors (JWTs, connection strings, raw hex, Base64) must clear the entropy threshold (default 3.5 bits/char). Password-family variables (`password`, `passwd`, `passphrase`, `private_key`, …) use a **lower 3.0 floor**, since human-chosen secrets are often memorable yet still real. Provider prefixes are also scanned **inside comment lines**, so a commented-out live key is still caught.
+**Entropy model.** Deterministic provider prefixes (AWS `AKIA…`, GCP `AIza…`, Stripe live `sk_live_…`, GitHub `ghp_`/`github_pat_`, GitLab `glpat-`, Slack `xox…`, npm `npm_`, PyPI `pypi-`) and PEM private-key blocks are matched **with no entropy floor** — they're unambiguous, so they're flagged regardless of randomness (a format-valid placeholder will also flag — suppress it via `.credactorignore`). Entropy-gated detectors (JWTs, connection strings, raw hex, Base64) must clear the entropy threshold (default 3.5 bits/char). Password-family variables (`password`, `passwd`, `passphrase`, `private_key`, …) use a **lower 3.0 floor**, since human-chosen secrets are often memorable yet still real. Provider prefixes are also scanned **inside comment lines**, so a commented-out live key is still caught. Note that the standalone hex/Base64 detectors only fire when the value is **quoted**; an unquoted high-entropy value is caught only when assigned to a credential-named variable (e.g. `api_key=…`) — this intentionally avoids flagging unquoted git SHAs and checksums.
 
 ## Suppression
 
