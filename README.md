@@ -22,6 +22,8 @@ Most secret scanners stop at detection. Credactor redacts in place and replaces 
 pip install credactor
 ```
 
+Requires Python 3.11 or newer.
+
 From source:
 
 ```bash
@@ -43,11 +45,17 @@ credactor --dry-run .
 # Scan and interactively redact
 credactor .
 
-# Redact everything without prompting
+# Redact everything (one confirmation prompt)
 credactor --fix-all .
+
+# Redact everything non-interactively (skip the prompt — for CI)
+credactor --fix-all --yes .
 
 # CI mode — exit 1 on findings
 credactor --ci .
+
+# Redact findings from another scanner's report (BETA)
+credactor --from-gitleaks gitleaks.json --dry-run .
 ```
 
 ### Pre-commit Hook
@@ -83,19 +91,22 @@ python -m credactor .
 ## Features
 
 - Entropy-based detection with per-pattern thresholds to cut false positives
-- Interactive or batch redaction — review one-by-one, or `--fix-all`
+- Interactive or batch redaction — review one-by-one, or `--fix-all` (`--yes`/`-y` skips the confirmation for non-interactive/CI runs)
 - Language-aware replacements (`os.environ`, `process.env`, `System.getenv`, etc.)
 - Git history scanning via `--scan-history`
-- `.bak` backups before any file modification
-- Inline `# credactor:ignore` suppression and `.credactorignore` allowlists
+- `.bak` backups before any file modification (fail-closed: redaction is skipped if a secure backup can't be written)
+- Inline `# credactor:ignore` suppression and `.credactorignore` allowlists (globs, `file:line`, value literals, and an explicit `value:` prefix)
 - Per-repo config via `.credactor.toml`
 - Parallel scanning (8 workers) for large repos
 - SARIF 2.1.0 output with column-level annotations for GitHub Code Scanning ([details](docs/user-guide.md#sarif))
+- **(BETA)** Ingest findings from external scanners — `--from-gitleaks FILE` / `--from-trufflehog FILE` — merged into the redaction pipeline and deduplicated against native findings (higher severity wins on overlap). Also configurable via an `[ingest]` table in `.credactor.toml`
 - `--fail-on-error` to catch files that couldn't be scanned
 
 ## Scanned File Types
 
-`.py` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bash` `.env` `.env.*` `.cfg` `.ini` `.toml` `.yaml` `.yml` `.rb` `.go` `.java` `.php` `.cs` `.kt` `.tf` `.hcl` `.conf` `.properties` `.xml`
+`.py` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bash` `.env` `.env.*` `.cfg` `.ini` `.toml` `.yaml` `.yml` `.rb` `.go` `.java` `.php` `.cs` `.kt` `.tf` `.hcl` `.conf` `.config` `.properties` `.xml` `.pem` `.key` `.crt`
+
+Plus standalone SSH / private-key files matched by name: `id_rsa` `id_dsa` `id_ecdsa` `id_ed25519`.
 
 JSON files are excluded by default (high false-positive rate from API responses). Use `--scan-json` to include them.
 

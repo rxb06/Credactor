@@ -63,11 +63,17 @@ pip install charset-normalizer
 pip install chardet
 ```
 
+If you installed from PyPI, you can pull in the recommended encoding extra directly:
+
+```bash
+pip install 'credactor[encoding]'
+```
+
 ## Configuration
 
 ### Config File
 
-`.credactor.toml` in your project root (or any parent directory). The tool walks upward from the scan target to find it.
+`.credactor.toml` in your project root, or a parent directory up to the repository root (the tool walks upward from the scan target, at most 5 levels). A config discovered **above** the repository root is refused — silently ignored unless you point `--config` at it explicitly, and always refused in `--ci` mode.
 
 ```toml
 # .credactor.toml
@@ -86,6 +92,14 @@ extra_extensions = [".env.encrypted"]
 extra_safe_values = ["test_fixture_token_abc123"]
 
 replacement = "REDACTED_BY_CREDACTOR"
+
+# External scanner ingestion (BETA) — merge Gitleaks/TruffleHog findings
+# into the redaction pipeline. Values are paths to the report files; the
+# scan target must be a DIRECTORY (the repo root) so report-relative file
+# paths resolve. Equivalent to --from-gitleaks / --from-trufflehog.
+[ingest]
+from_gitleaks = "gitleaks-report.json"
+from_trufflehog = "trufflehog-output.json"
 ```
 
 Override path:
@@ -111,16 +125,23 @@ const key = "test_key";  // credactor:ignore
 `.credactorignore` in your project root:
 
 ```
-# Glob patterns
+# Glob patterns (fnmatch — NO globstar; ** behaves like a single *)
 tests/fixtures/*.py
-**/test_data/**
+tests/*/test_data/*
 
-# Specific line
+# Specific line (positional — matched by line number only; re-check
+# after large edits, since a new secret can drift onto the line)
 config/defaults.py:42
 
-# Specific value
+# Specific value (anywhere)
 test_fixture_value_abc123
+
+# Value containing . / ? or * (base64, JWT, connection string) — use the
+# value: prefix so it is not mistaken for a glob/path
+value:eyJhbGciOiJIUzI1NiJ9.payload.sig
 ```
+
+Broad glob patterns and value-literal / positional suppressions are reported as warnings on stderr at load time, so they get reviewed for detection-bypass.
 
 ## Pre-commit Hooks and CI/CD
 
@@ -139,25 +160,33 @@ python -m pytest tests/ -v
 credactor/
     __init__.py          # version
     __main__.py          # python -m entry point
+    _log.py              # logging configuration
     cli.py               # argument parsing, main flow
     config.py            # .credactor.toml loading
     gitignore.py         # .gitignore matching
+    ingest.py            # external scanner ingestion (Gitleaks/TruffleHog)
     patterns.py          # regexes, constants
     redactor.py          # file modification, backups
     report.py            # text/JSON/SARIF output
     scanner.py           # detection logic
     suppressions.py      # inline ignore, allowlist
+    types.py             # Finding TypedDict and shared types
     utils.py             # entropy, encoding detection
     walker.py            # directory traversal, parallelism
 scripts/
     audit_wheel.py       # supply chain: verify wheel matches repo
 tests/
+    __init__.py
     conftest.py
+    benchmark/                     # detection benchmark corpus
     test_cli.py
     test_config.py
+    test_detection_benchmark.py
     test_gitignore.py
+    test_ingest.py
     test_patterns.py
     test_redactor.py
+    test_redactor_properties.py
     test_report.py
     test_safe_values.py
     test_scanner.py

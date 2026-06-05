@@ -4,8 +4,8 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 2.3.x   | :white_check_mark: |
-| < 2.3   | :x:                |
+| 2.4.x   | :white_check_mark: |
+| < 2.4   | :x:                |
 
 Only the latest minor release receives security patches. We recommend always running the most recent version.
 
@@ -45,6 +45,7 @@ The following are **in scope** for security reports:
 - File system safety issues (path traversal, symlink attacks, TOCTOU races).
 - Denial of service (ReDoS, OOM, infinite loops).
 - Configuration injection (malicious `.credactor.toml` or `.credactorignore` causing unsafe behaviour).
+- Untrusted external-scanner reports ingested via `--from-gitleaks` / `--from-trufflehog` (path traversal, symlink escape, OOM/size-bomb, or self-corruption through crafted finding paths).
 
 The following are **out of scope**:
 
@@ -66,13 +67,15 @@ For the full security model, trust boundaries, hardening measures, and known lim
 
 ## Defensive measures ledger (SR-2 Stage A)
 
-This ledger inventories every defensive marker that currently appears as an inline `# SEC-XX:` / `# CVE-XX` / `# HIGH-XX` / `# MED-XX` / `A1`–`A13` / `P2` comment in the source. Stage A is purely a catalogue; no source comments are removed yet. Stage B (review) decides per-row whether the inline comment is **K** (keep — explains an invariant) or **P** (purge from source — motivation belongs only here in the ledger). Stage C executes the purge.
+This ledger inventories every defensive marker that was originally present as an inline `# SEC-XX:` / `# CVE-XX` / `# HIGH-XX` / `# MED-XX` / `A1`–`A13` / `P2` comment in the source. The three-stage review is now **complete** (see the dated status note at the end of this section): Stage A catalogued every marker, Stage B decided per-row whether the inline comment was **K** (keep — explains an invariant) or **P** (purge from source — motivation now lives only here in the ledger), and Stage C executed the purge. This table is therefore the canonical record of the motivation behind each defence; the inline `# SEC-XX:`-style prefixes have already been removed from source for the P-marked rows.
 
 ### Format
 
 `ID — one-line summary  ·  primary site(s)`
 
 If an ID has multiple sites, the first is the primary defence; the rest are propagation/usage points.
+
+> **Note:** Line numbers in the *Primary site(s)* column are a snapshot from the Stage A catalogue and may have drifted after the Stage C source sweep and later refactors. Treat them as approximate — locate each defence by its summary, not the exact line.
 
 ### SEC series
 
@@ -141,18 +144,8 @@ If an ID has multiple sites, the first is the primary defence; the rest are prop
 | A13 | Skip findings whose resolved path is the report file itself (self-corruption guard) | `ingest.py:122,174,382` |
 | P2 | Type-check commit field before slicing (non-string would crash dedup) | `ingest.py:305,497` |
 
-### Stage B instructions
+### Review methodology (completed)
 
-For each row above, mark **K** if the inline comment at the cited site genuinely helps a reader understand a non-obvious invariant *while reading that code*. Mark **P** if the inline comment is motivation/history that this ledger now captures and the source comment can be removed.
+Each row above was reviewed and marked **K** (keep inline) where the source comment explains a non-obvious invariant *while reading that code* — for example "Append separator AFTER normpath to prevent prefix collision", which would otherwise look redundant. Rows were marked **P** (purge) where the inline comment was motivation/history now captured by this ledger and the source comment added nothing beyond the ticket prefix (e.g. "SEC-04: Resolve path before passing to subprocess", immediately followed by code that resolves the path). An automated sweep then removed the `SEC-XX:` / `CVE-XX:` / etc. prefixes from P-marked sites, preserving any substantive trailing comment text and deleting lines that had none.
 
-Rule of thumb:
-- **K** — the comment explains *why this surprising code is necessary* (e.g. "Append separator AFTER normpath to prevent prefix collision" — without this you'd think the line is redundant).
-- **P** — the comment is essentially "we did this because of ticket X" with no remaining surprise (e.g. "SEC-04: Resolve path before passing to subprocess" — the next line literally resolves the path; the SEC-04 prefix adds nothing).
-
-Aim for fewer than 15 K entries. Everything else is P.
-
-### Stage C
-
-Once Stage B is complete, run an automated sweep that removes `SEC-XX:` / `CVE-XX:` / etc. prefixes from P-marked sites while preserving any substantive comment text after the colon. Sites with no substantive text after the prefix become candidates for full-line deletion.
-
-**Stage B complete 2026-05-24**: 15 invariants retained inline (K); remaining tags purged from source (P). Test suite: 425 passed.
+**Stage B/C complete 2026-05-24**: 15 invariants retained inline (K); remaining tags purged from source (P). The test suite passed (425 tests at the time of the sweep; it has since grown to 600, all green).

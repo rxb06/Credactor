@@ -7,6 +7,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 - Accidentally committing hardcoded API keys, tokens, passwords, and private keys.
 - Credentials in assignment statements, XML attributes, connection strings, PEM blocks, and multi-line strings.
 - Re-flagging already-redacted values (the sentinel `REDACTED_BY_CREDACTOR` is in the safe-values list).
+- **(BETA) Ingesting external scanner output:** findings from Gitleaks (`--from-gitleaks FILE`) or TruffleHog (`--from-trufflehog FILE`) are merged into the redaction pipeline, deduplicated against native findings (severity merged to the higher value on a duplicate), and still pass through `.credactorignore` suppression. Ingestion requires a **directory** target so report-relative file paths resolve correctly.
 
 ## What Credactor Does NOT Protect Against
 
@@ -22,6 +23,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 | Source files being scanned | Untrusted | May contain adversarial content; regex patterns are hardened against ReDoS |
 | `.credactor.toml` config | Semi-trusted | Can adjust thresholds and safe-values; traversal limited to 5 parent dirs; an implicitly-discovered config outside the project root is refused (an explicit `--config` outside the root is honored, with a warning, only in non-CI) |
 | `.credactorignore` | Semi-trusted | Can suppress findings for specific files, lines, or values |
+| External scanner report (`--from-gitleaks` / `--from-trufflehog`, `[ingest]`) | Untrusted | Names on-disk files Credactor will redact; paths are normalised and confined to the target directory (traversal rejected), the report file itself is skipped (self-corruption guard), missing/invalid paths are dropped, and the report is size- and count-capped before parsing to bound memory |
 | CLI arguments | Trusted | Provided by the developer running the tool |
 | Git history (`--scan-history`) | Untrusted | Parses `git log -p` output; input is sanitised |
 
@@ -93,13 +95,34 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 
 ### TTP Chain Audit (SEC-35 through SEC-39)
 
-- **SEC-35** — SARIF output injection: HTML-escape finding type in all SARIF rule fields (`id`, `shortDescription`, `fullDescription`). Prevents XSS via attacker-controlled XML attribute names in downstream SARIF viewers.
+- **SEC-35** — SARIF output injection: HTML-escape the finding type in all SARIF rule fields (`id`, `shortDescription`, `fullDescription`) and the masked preview in the result message. Prevents XSS via attacker-controlled XML attribute names in downstream SARIF viewers. The whole document is JSON-encoded and only a short preview (first 4 chars + the literal `[REDACTED]`) ever appears; `artifactLocation.uri` is intentionally **not** HTML-escaped (it is a filesystem path consumed as data, not rendered as HTML).
 - **SEC-36** — Terminal escape injection: Apply `sanitize_for_terminal()` to file paths, finding types, and raw source lines in text report output. Prevents ANSI escape-sequence injection via crafted filenames or source content.
 - **SEC-37** — Bare `$` prefix bypass: Validate that text after `$` matches POSIX env var name syntax (`[A-Za-z_][A-Za-z0-9_]*`). Prevents suppressing credentials by prefixing with `$`.
 - **SEC-38** — Config type confusion: Wrap `float()`/`int()` conversions in `apply_config_file()` with try/except. Prevents scan crash (DoS) from malformed `.credactor.toml` values.
 - **SEC-39** — Config trust boundary (non-git): When no `.git` directory exists, fall back to comparing config location against the scan root. Prevents silent config loading from parent directories on non-git repos.
 
 See `mydocs/vulnerability-chains.md` for the full chain analysis including attack narratives, scope, and false positives investigated.
+
+### Unreleased (Phase 1–3 hardening + external ingestion)
+
+**External-scanner ingestion (BETA) — `credactor/ingest.py`:**
+
+- **SEC-40a/b/c** — Ingested Gitleaks/TruffleHog reports are treated as untrusted: each report file path is `normpath`+`resolve`d against the target and rejected if it escapes the target directory; a path equal to the report file itself is skipped (self-corruption guard); a missing-on-disk file is dropped; an embedded NUL or otherwise invalid path is skipped per-finding rather than aborting the batch. Reports are size-capped before parsing and finding-count-capped to bound memory, and non-UTF-8 (`U+FFFD`) secret fields are skipped.
+- **Dedup severity merge** — native and external findings are deduplicated; on a duplicate the higher severity is kept, so a TruffleHog `Verified` (critical) duplicate cannot silently downgrade the survivor. Ingested findings still pass through `.credactorignore` suppression.
+- **Directory-target enforcement** — `--from-gitleaks` / `--from-trufflehog` exit 2 on a file target, a missing report, or when combined with `--scan-history`.
+
+**CLI / config / suppression / backup:**
+
+- **Non-git hard error** — `--staged` / `--scan-history` in a non-git directory exit 2 (was a false-clean exit 0).
+- **`--staged` read-only** — forces dry-run even with `--fix-all` (which is warned and ignored), so a staged scan never rewrites the working tree.
+- **Confirmation gate** — `--fix-all` requires a confirmation; without `--yes` / `-y` a non-TTY run aborts rather than silently rewriting files.
+- **Config trust boundary (extends SEC-39)** — an implicitly-discovered `.credactor.toml` above the project root is refused in non-CI too; it is honoured only via an explicit `--config` (non-CI). CI always refuses it.
+- **Secure-backup hardening** — `--secure-backup-dir` is refused if its path resolves through a symlink (leaf or any ancestor, excepting the well-known macOS `/tmp`, `/var`, `/etc` system symlinks), and fails closed (skips the file) when the directory is unwritable rather than leaving an in-repo plaintext `.bak`.
+- **Replacement-string allowlist** — a custom replacement is validated against `[A-Za-z0-9_-]`, rejecting shell/markup/quote metacharacters, newlines, and control characters.
+- **Config-input hardening (extends SEC-38)** — malformed list/table config shapes warn-and-skip instead of crashing or char-splitting a string value.
+- **Suppression visibility** — value-literal and positional `file:line` suppressions warn at load time (the latter matches by line number only and can be defeated by line drift), and overly broad globs are flagged (`fnmatch` has no globstar, so `**` behaves as `*`). `.credactorignore` gains a `value:<literal>` prefix for values containing glob metacharacters.
+
+This hardening is on the development branch and ships in the next release (Python 3.11+, stdlib `tomllib`); it is not in the released 2.3.3.
 
 ## Supply Chain Hardening
 

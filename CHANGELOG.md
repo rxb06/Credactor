@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **External-scanner ingestion (BETA).** New `--from-gitleaks FILE` and
+  `--from-trufflehog FILE` flags ingest findings from a Gitleaks JSON report or
+  a TruffleHog NDJSON file and merge them into the redaction pipeline. Ingested
+  findings are deduplicated against native findings; on a true duplicate the
+  higher severity is kept (so an external `Verified` critical is not silently
+  downgraded). Both flags require a **directory** target so report-relative paths
+  resolve, and cannot be combined with `--scan-history`. The same paths can be
+  set via an `[ingest]` table in `.credactor.toml` (`from_gitleaks` /
+  `from_trufflehog`).
+- `--yes` / `-y`: skips the `--fix-all` confirmation prompt for non-interactive
+  / CI use. Without it, `--fix-all` aborts when stdin is not a TTY (pipe,
+  `</dev/null`).
+- `.credactorignore` gains an explicit `value:<literal>` prefix for suppressing
+  secret values that contain glob metacharacters (`. / ? *`), which would
+  otherwise be routed to path/glob matching. Overly broad globs (`*/*`,
+  `**/*.*`, …) now warn at load time (note: `fnmatch` has no globstar, so `**`
+  behaves as `*`).
+- Detection recall: standalone key/cert files (`.pem` `.key` `.crt` and
+  `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`), `.config` (web.config/app.config)
+  files, Go `:=` short-variable assignments, compact JWTs, and multiple distinct
+  secrets on a single line are now detected.
+
 ### Changed
 
 - Verbose diagnostics in the external-scanner ingest paths (`--from-gitleaks`,
@@ -15,12 +39,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages display with the `[INFO]` prefix (previously `[WARN]`), and per-line
   suppression breadcrumbs route through `logger.debug` (`[SKIP]`). Output stays
   on stderr and default (non-verbose) runs are unchanged.
+- `--staged` is now strictly read-only: a staged scan never rewrites the working
+  tree, so `--fix-all` is ignored (with a warning) and the run is forced to
+  dry-run. It still reports findings and exits 1.
+- Config trust boundary tightened (extends SEC-29): an implicitly-discovered
+  `.credactor.toml` outside the project root is now refused in non-CI mode too,
+  not just in CI — it is honoured only when `--config` points at it explicitly.
+- Deterministic provider prefixes (AWS, GCP, Stripe-live, GitHub, GitLab, Slack,
+  npm, PyPI) and PEM blocks are no longer entropy-gated, so a format-valid token
+  is flagged regardless of randomness, and provider prefixes are also scanned
+  inside comment lines. Heuristic detectors (hex, Base64, JWT, connection
+  strings) stay entropy-gated; this is a deliberate recall-over-precision trade
+  for unambiguous tokens.
 - **BREAKING:** Minimum Python version raised to **3.11**. Python 3.10
   support is dropped. Users on 3.10 must pin to credactor `< 3.0` or
   upgrade Python. Rationale: 3.10 reaches end-of-life in October 2026,
   and `tomllib` (3.11+ stdlib) replaces the previous hand-rolled TOML
   fallback parser, preserving the project's zero-runtime-dependency
   policy.
+
+### Security
+
+- **Redaction leak fix:** when the same secret value appeared more than once on
+  a line but scanned to a single finding, an extra copy could be left in
+  plaintext while the run reported success. A post-replacement sweep now removes
+  any surviving copy of a redacted value.
+- **Replacement-string hardening:** a custom `--replacement` (or config
+  `replacement`) is validated against an allowlist (`[A-Za-z0-9_-]`), rejecting
+  shell/markup/quote metacharacters, newlines, and control characters that could
+  inject into rewritten files. An explicit CLI `--replacement` now correctly
+  overrides a config value.
+- **Backup hardening:** `--secure-backup-dir` is refused when the path resolves
+  through a symlink (leaf or any ancestor), and fails closed when the directory
+  is unwritable — it never falls back to an in-repo plaintext `.bak`.
+- **Config-input hardening:** a malformed `.credactor.toml` (a non-list list
+  key, a non-string list element, an out-of-range scalar) no longer crashes or
+  corrupts state — invalid values warn and fall back to defaults.
+- `--staged` / `--scan-history` run outside a git repository now exits 2 instead
+  of a false-clean exit 0.
+- **Ingest hardening (SEC-40a/b/c):** a report file-size guard before parsing,
+  hardening against non-string path/secret fields, path-traversal and
+  self-reference guards, symlink resolution with within-target containment,
+  `.credactorignore` suppression of ingested findings, and graceful skipping of
+  a finding with a missing file or an invalid (NUL-byte) path (skips the one
+  finding rather than aborting the batch).
+
+### Fixed
+
+- Detection recall: recognise bare `secret`, `api_secret`, and `auth_secret`
+  variable names (word-boundary matched, so `secretary` is not flagged), and
+  treat HashiCorp `vault:` references as safe lookups rather than hardcoded
+  secrets.
 
 ### Removed
 
@@ -116,6 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git staged file and history scanning.
 - Pre-commit hook support (beta).
 
+[Unreleased]: https://github.com/rxb06/Credactor/compare/v2.3.3...HEAD
 [2.3.3]: https://github.com/rxb06/Credactor/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/rxb06/Credactor/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/rxb06/Credactor/compare/v2.3.0...v2.3.1

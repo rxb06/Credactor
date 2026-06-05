@@ -12,6 +12,8 @@ Shows findings without touching files.
 
 ```
 Scanning: /path/to/project
+  Note: Credactor scans forward (into subdirectories) only.
+  For best results, point it at your project root directory.
 
 ======================================================================
   CREDENTIAL SCAN REPORT  --  5 finding(s) in 3 file(s)
@@ -65,11 +67,24 @@ Fix everything in one shot:
 python -m credactor --fix-all /path/to/project
 ```
 
+`--fix-all` asks for one confirmation before it rewrites files:
+
 ```
+  --fix-all will modify 3 file(s) with 5 replacement(s).
+  .bak backups will be created (contain original secrets).
+  Tip: run with --dry-run first to preview changes.
+  Proceed? [y/N]: y
+
 ======================================================================
   Summary:  5 replaced  |  0 skipped  |  5 total
   Reminder: rotate / revoke any credentials that were just redacted.
 ======================================================================
+```
+
+In a script, CI job, or piped run there is no TTY to answer the prompt, so the run aborts. Pass `--yes` / `-y` to skip it:
+
+```bash
+python -m credactor --fix-all --yes /path/to/project
 ```
 
 ## 4. Replace with env vars
@@ -127,7 +142,8 @@ Clean output:
 
 ```
 Scanning: /path/to/project
-[OK] No hardcoded credentials detected. Safe for commits.
+
+[OK] No hardcoded credentials detected at the current sensitivity (entropy floor 3.5). Review weak or short secrets manually.
 ```
 
 Finding staged:
@@ -217,16 +233,23 @@ def test_api_validates_key():
 Allowlist (`.credactorignore`):
 
 ```
-# Test fixtures
+# Test fixtures (glob; note ** behaves like * — fnmatch has no globstar)
 tests/fixtures/**
 tests/data/*.py
 
-# Known false positive
+# Known false positive at a specific line
+# (positional only — re-check after large edits, the line can drift)
 config/defaults.py:42
 
-# Hash that looks like a credential
+# Hash that looks like a credential (bare value literal)
 a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4
+
+# A value containing . / ? or * (base64, JWT, connection string) must use the
+# explicit value: prefix, otherwise it is treated as a glob/path:
+value:eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123
 ```
+
+Value-literal and `file:line` suppressions are intentionally noisy — Credactor logs a warning at load time for each kind so they get reviewed for detection-bypass.
 
 ## 9. Include JSON files
 
@@ -310,3 +333,27 @@ MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB...
 ```
 
 Lines inside the block aren't scanned separately.
+
+## 13. Ingest external scanner findings (BETA)
+
+Merge findings from Gitleaks or TruffleHog into Credactor's redaction pipeline, so one tool both detects (across scanners) and redacts. Ingested findings are deduplicated against Credactor's native findings, keeping the higher severity.
+
+```bash
+# Run Gitleaks, then redact everything it (and Credactor) found
+gitleaks detect --report-format json --report-path gitleaks.json .
+python -m credactor --from-gitleaks gitleaks.json --fix-all --yes .
+
+# TruffleHog NDJSON output, report-only gate
+trufflehog filesystem . --json > trufflehog.json
+python -m credactor --from-trufflehog trufflehog.json --ci .
+```
+
+The target must be a **directory** (the repository root): file paths in the report are resolved relative to it, so a file target is rejected with exit 2. Ingestion also cannot be combined with `--scan-history`.
+
+Pin the report paths in `.credactor.toml` instead of passing the flags:
+
+```toml
+[ingest]
+from_gitleaks = "gitleaks.json"
+from_trufflehog = "trufflehog.json"
+```

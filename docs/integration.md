@@ -118,6 +118,53 @@ credactor --ci --fail-on-error .  # strict mode
 - `.credactor.toml` files discovered *implicitly* outside the project root are refused (SEC-29 / M14): in CI they are always refused; in non-CI you can still load one by pointing `--config` at it explicitly.
 - `--fail-on-error` ensures files skipped due to permissions are not silently ignored.
 
+## Ingesting External Scanner Findings (Beta)
+
+> External-scanner ingestion is in beta.
+
+Credactor can ingest findings from [Gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog), merge them into its own pipeline, and gate (or redact) on the combined set. Ingested findings are deduplicated against native Credactor findings, and on a duplicate the higher severity is kept.
+
+Both `--from-gitleaks` and `--from-trufflehog` **require a directory target** (the repository root) so report file paths resolve correctly — a file target exits with code 2. Ingestion also **cannot be combined with `--scan-history`** (exits 2): external reports reference on-disk files, history scanning references committed content.
+
+Run the external scanner first, then feed its report to Credactor as a CI gate:
+
+```yaml
+- name: Gitleaks scan
+  run: gitleaks detect --report-format json --report-path gitleaks.json --no-git
+  continue-on-error: true
+
+- name: Credactor gate (native + Gitleaks)
+  run: credactor --ci --from-gitleaks gitleaks.json .
+```
+
+TruffleHog emits newline-delimited JSON:
+
+```yaml
+- name: TruffleHog scan
+  run: trufflehog filesystem . --json > trufflehog.json
+  continue-on-error: true
+
+- name: Credactor gate (native + TruffleHog)
+  run: credactor --ci --from-trufflehog trufflehog.json .
+```
+
+Under `--ci` the run is report-only: ingested findings are scanned, merged, and reported, and the run exits 1 if anything remains. To configure ingestion in `.credactor.toml` instead, add an `[ingest]` table:
+
+```toml
+[ingest]
+from_gitleaks = "gitleaks.json"
+from_trufflehog = "trufflehog.json"
+```
+
+## Automated Remediation (non-interactive)
+
+`--ci` is a read-only gate and **cannot** be combined with `--fix-all`. To actually rewrite files in an unattended job, use `--fix-all` with `--yes` (`-y`) to skip the confirmation prompt — without `--yes`, `--fix-all` aborts when stdin is not a TTY:
+
+```bash
+credactor --dry-run .          # preview first
+credactor --fix-all --yes .    # then rewrite (writes .bak unless --no-backup)
+```
+
 ## Configuration
 
 See the [User Guide](user-guide.md) for the full list of CLI flags, config options, and suppression mechanisms.

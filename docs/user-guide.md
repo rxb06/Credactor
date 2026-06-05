@@ -33,7 +33,8 @@ In interactive mode each finding is shown and you choose whether to redact it:
 | `--version` | Show version and exit |
 | `--ci` | Read-only mode: report findings and exit 1. Blocks `--fix-all` and forces `--dry-run` |
 | `--dry-run` | Show findings without modifying anything |
-| `--fix-all` | Redact all findings without prompts (cannot combine with `--ci`) |
+| `--fix-all` | Redact all findings in one batch (no per-finding prompts). Asks for a single confirmation before proceeding; pass `--yes` to skip it. On non-interactive stdin without `--yes` it aborts. Cannot combine with `--ci` |
+| `--yes` / `-y` | Skip the `--fix-all` confirmation prompt — required for non-interactive/CI use (without it, `--fix-all` on a non-TTY stdin aborts) |
 | `--staged` | Scan only git-staged files (read-only — forces dry-run) |
 | `--scan-history` | Scan git commit history |
 
@@ -62,10 +63,17 @@ In interactive mode each finding is shown and you choose whether to redact it:
 
 | Flag | Description |
 |------|-------------|
-| `--config PATH` | Explicit config file path |
+| `--config PATH` | Explicit config file path (searches the target dir and up to 5 parents by default). A config discovered **outside** the project root is refused — always under `--ci`, and otherwise unless you point `--config` at it explicitly |
 | `--scan-json` | Include `.json` files |
 | `--fail-on-error` | Exit 2 if any files could not be scanned (e.g. permission errors) |
 | `--verbose` / `-v` | Show detailed scan activity on stderr: suppressed findings, skipped files, safe-value decisions |
+
+### External Tool Ingestion (BETA)
+
+| Flag | Description |
+|------|-------------|
+| `--from-gitleaks FILE` | [BETA] Ingest findings from a Gitleaks JSON report. Paths in the report resolve relative to the target directory; requires a **directory** target |
+| `--from-trufflehog FILE` | [BETA] Ingest findings from a TruffleHog JSON output file (newline-delimited / NDJSON). Paths resolve relative to the target directory; requires a **directory** target |
 
 ## Replacement Modes
 
@@ -147,6 +155,8 @@ credactor --replace-with custom --replacement "TODO_REPLACE_ME"
 | Medium | Yellow | Heuristic — hex string, Stripe test key, generic credential variable. |
 | Low | Cyan | Weak heuristic — long Base64. Higher false positive rate. |
 
+**Entropy model.** Deterministic provider prefixes (AWS `AKIA…`, GCP `AIza…`, Stripe live `sk_live_…`, GitHub `ghp_`/`github_pat_`, GitLab `glpat-`, Slack `xox…`, npm `npm_`, PyPI `pypi-`) and PEM private-key blocks are matched **with no entropy floor** — they're unambiguous, so they're flagged regardless of randomness (a format-valid placeholder will also flag — suppress it via `.credactorignore`). Entropy-gated detectors (JWTs, connection strings, raw hex, Base64) must clear the entropy threshold (default 3.5 bits/char). Password-family variables (`password`, `passwd`, `passphrase`, `private_key`, …) use a **lower 3.0 floor**, since human-chosen secrets are often memorable yet still real. Provider prefixes are also scanned **inside comment lines**, so a commented-out live key is still caught.
+
 ## Suppression
 
 ### Inline
@@ -218,9 +228,40 @@ Output includes `[SKIP]` lines with the reason:
 
 This is useful for auditing what Credactor chose NOT to flag — especially in CI where you want a complete record.
 
+## External Scanner Ingestion (BETA)
+
+Credactor can ingest findings produced by other secret scanners and feed them through its own redaction pipeline — so you can detect with Gitleaks or TruffleHog and then *redact* with Credactor.
+
+```bash
+# Run an external scanner, then ingest its report and redact
+gitleaks detect --report-format json --report-path gl.json
+credactor --from-gitleaks gl.json --fix-all --yes .
+
+trufflehog filesystem . --json > th.json
+credactor --from-trufflehog th.json --dry-run .
+```
+
+**How it works:**
+
+- External findings are **merged** with Credactor's own (native) findings and run through the same report/redact pipeline.
+- Findings are **deduplicated** against native findings on `(file, line, value)`. When a duplicate is dropped, the survivor keeps the **higher** severity (e.g. a TruffleHog `Verified` critical can raise a native finding's severity).
+- Paths inside the external report are resolved **relative to the target directory**, so the target must be a **directory** (the repo root), not a single file — pointing `--from-gitleaks`/`--from-trufflehog` at a file target exits 2.
+- Findings whose paths resolve outside the target, reference a missing file, or point at the report itself are skipped.
+- Ingestion **cannot** be combined with `--scan-history` (external findings reference on-disc files; history scan references committed content) — this exits 2.
+
+**Config-file form.** Instead of the CLI flags, set the report paths in `.credactor.toml`:
+
+```toml
+[ingest]
+from_gitleaks = "reports/gitleaks.json"
+from_trufflehog = "reports/trufflehog.json"
+```
+
 ## Scanned File Types
 
-`.py` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bash` `.env` `.env.*` `.cfg` `.ini` `.toml` `.yaml` `.yml` `.rb` `.go` `.java` `.php` `.cs` `.kt` `.tf` `.hcl` `.conf` `.properties` `.xml`
+`.py` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bash` `.env` `.env.*` `.cfg` `.ini` `.toml` `.yaml` `.yml` `.rb` `.go` `.java` `.php` `.cs` `.kt` `.tf` `.hcl` `.conf` `.config` `.properties` `.xml` `.pem` `.key` `.crt`
+
+Plus standalone SSH / private-key files matched by name: `id_rsa` `id_dsa` `id_ecdsa` `id_ed25519`.
 
 JSON files are excluded by default due to high false-positive rates from API response data. Use `--scan-json` to include them.
 
@@ -256,6 +297,8 @@ The replacement itself uses **atomic writes**: Credactor writes to a temporary f
 | `--secure-delete` | ✅ | `.bak` beside original | ✅ Overwritten with random bytes, then deleted |
 | `--secure-backup-dir /path --secure-delete` | ✅ | In `/path` | ✅ Overwritten with random bytes, then deleted |
 | `--no-backup` | ❌ | — | N/A |
+
+> **`--secure-backup-dir` fails closed.** If the backup directory is unwritable, or its path resolves through a symlink (the leaf or any parent), Credactor refuses to fall back to an in-repo plaintext backup. It removes the temporary in-repo backup and **skips that file** — no backup, no redaction — and logs an error. Re-run once the directory is writable and symlink-free.
 
 ### Recovering from Accidental Redaction
 
@@ -354,7 +397,7 @@ SARIF 2.1.0 output for GitHub Code Scanning, VS Code SARIF Viewer, or any compat
 |------|---------|
 | `0` | No findings, or all resolved |
 | `1` | Unresolved findings |
-| `2` | Error, or files skipped with `--fail-on-error` |
+| `2` | Error: path not found, system/home/protected directory, `--fail-on-error` with skipped files, a dangerous `--replacement`, or `--staged`/`--scan-history` run outside a git repository |
 
 ## Not Flagged
 
