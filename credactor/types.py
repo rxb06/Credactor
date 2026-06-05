@@ -44,3 +44,9 @@ class Finding(TypedDict):
     value_preview: str
     raw:           str
     commit:        NotRequired[str]
+
+
+# Severity ordering, highest first. Shared by the scanner's per-line span dedup
+# (L2) and the ingest dedup's severity merge (L5c) so both rank severities the
+# same way.
+SEVERITY_RANK: dict[str, int] = {'critical': 3, 'high': 2, 'medium': 1, 'low': 0}

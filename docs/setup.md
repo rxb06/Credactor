@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - No required dependencies. Optional: `charset-normalizer` or `chardet` for non-UTF-8 files.
 
 ## Installation
@@ -61,12 +61,6 @@ Better encoding detection for legacy codebases:
 pip install charset-normalizer
 # or
 pip install chardet
-```
-
-TOML config on Python < 3.11:
-
-```bash
-pip install tomli
 ```
 
 ## Configuration

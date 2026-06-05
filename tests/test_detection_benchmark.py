@@ -19,12 +19,12 @@ from credactor.config import Config
 from credactor.walker import walk_and_scan
 from tests.benchmark.corpus import CASES
 
-# --- ratchet floors (recall 90.5%, precision 90.5% after M3 added critical
-#     provider-prefix scanning on comment lines, recovering one commented-token
-#     case with no new false positive; M1/M2/M4 landed the key-file, .config, and
-#     Go := gaps. Set just below current so any single-case regression fails.
-#     Raise these as L1/L12 land and FN/FP cases flip). ---
-RECALL_FLOOR = 0.90
+# --- ratchet floors (recall 95.2%, precision 90.9% after L1 (compact-JWT),
+#     L2 (multi-secret per line), and L12 (drop entropy floor on deterministic
+#     provider rows) recovered further cases with no new false positive; M3
+#     added comment provider-prefix scanning; M1/M2/M4 the key-file/.config/Go :=
+#     gaps. Set just below current so any single-case regression fails. ---
+RECALL_FLOOR = 0.95
 PRECISION_FLOOR = 0.90
 
 

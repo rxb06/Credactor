@@ -9,7 +9,12 @@ import pytest
 
 from credactor.config import Config
 from credactor.suppressions import AllowList
-from credactor.walker import scan_staged_files, walk_and_scan
+from credactor.walker import (
+    GitUnavailableError,
+    scan_git_history,
+    scan_staged_files,
+    walk_and_scan,
+)
 
 
 class TestWalkAndScan:
@@ -178,14 +183,53 @@ class TestStagedScanning:
         assert len(findings) >= 1
         assert errored == []
 
-    def test_bails_when_toplevel_unresolvable(self, tmp_dir):
-        # if rev-parse can't resolve the repo root, staged paths can't be placed
-        # safely, so the scan bails — never falls back to a wrong base path
+    def test_raises_when_toplevel_unresolvable(self, tmp_dir):
+        # L4: if rev-parse fails the dir isn't a usable git repo — this is a hard
+        # GitUnavailableError (CLI exit 2), not a false-clean empty return.
         fake = mock.Mock(returncode=128, stdout='', stderr='fatal: not a git repo')
-        with mock.patch('credactor.walker.subprocess.run', return_value=fake):
-            findings, errored = scan_staged_files(tmp_dir, Config(no_color=True))
-        assert findings == []
-        assert errored == []
+        with mock.patch('credactor.walker.subprocess.run', return_value=fake), \
+                pytest.raises(GitUnavailableError):
+            scan_staged_files(tmp_dir, Config(no_color=True))
+
+    def test_staged_in_non_git_dir_raises(self, tmp_dir):
+        # L4: a plain (non-git) directory is a hard error for --staged
+        with pytest.raises(GitUnavailableError):
+            scan_staged_files(tmp_dir, Config(no_color=True))
+
+    def test_scan_history_in_non_git_dir_raises(self, tmp_dir):
+        # L4: same for --scan-history
+        with pytest.raises(GitUnavailableError):
+            scan_git_history(tmp_dir, Config(no_color=True))
+
+    def test_scan_history_empty_repo_is_clean(self, tmp_dir):
+        # L4 carve-out: a valid repo with zero commits makes `git log` fail too,
+        # but rev-parse succeeds -> NOT an error, just nothing to scan (exit 0).
+        repo = os.path.join(tmp_dir, 'empty')
+        os.makedirs(repo)
+        subprocess.run(['git', 'init'], cwd=repo, check=True, capture_output=True)
+        assert scan_git_history(repo, Config(no_color=True)) == []
+
+    def test_scan_history_bare_repo_is_scannable(self, tmp_dir):
+        # L4 regression: a valid BARE repo (no work tree) must NOT be rejected —
+        # `git log` works there, but `git rev-parse --show-toplevel` fails, so the
+        # discriminator must be --git-dir (rc 0 in bare repos).
+        work = os.path.join(tmp_dir, 'work')
+        os.makedirs(work)
+        env = dict(check=True, capture_output=True, cwd=work)
+        subprocess.run(['git', 'init'], **env)
+        subprocess.run(['git', 'config', 'user.email', 't@t'], **env)
+        subprocess.run(['git', 'config', 'user.name', 't'], **env)
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        with open(os.path.join(work, 'app.py'), 'w') as f:
+            f.write(f'aws = "{key}"\n')
+        subprocess.run(['git', 'add', '-A'], **env)
+        subprocess.run(['git', 'commit', '-m', 'x'], **env)
+        bare = os.path.join(tmp_dir, 'bare.git')
+        subprocess.run(['git', 'clone', '--bare', work, bare],
+                       check=True, capture_output=True)
+        findings = scan_git_history(bare, Config(no_color=True))   # must NOT raise
+        assert any(key in f.get('full_value', '') or 'AWS' in f.get('type', '')
+                   for f in findings), findings
 
     def test_ignores_unstaged_worktree_secret(self, tmp_dir):
         repo = self._init_repo(tmp_dir)

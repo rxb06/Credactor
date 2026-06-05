@@ -447,3 +447,54 @@ class TestReplacementPrecedence:
             main(['--fix-all', '--replace-with', 'custom', tmp_dir])
         with open(src) as f:
             assert 'FROM_CONFIG' in f.read()
+
+
+class TestFixAllYes:
+    """L3: --fix-all needs a TTY or --yes; --yes proceeds non-interactively, while
+    a non-TTY stdin without --yes aborts (no destructive surprise in a pipe)."""
+
+    def _repo(self, tmp_dir):
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        src = os.path.join(tmp_dir, 'app.py')
+        with open(src, 'w') as f:
+            f.write(f'api_key = "{key}"\n')
+        return src, key
+
+    def test_fix_all_without_yes_aborts_on_non_tty(self, tmp_dir, monkeypatch):
+        src, key = self._repo(tmp_dir)
+
+        def _raise_eof(*_a):
+            raise EOFError()
+        monkeypatch.setattr('builtins.input', _raise_eof)
+        with pytest.raises(SystemExit) as exc:
+            main(['--fix-all', tmp_dir])
+        assert exc.value.code == 1
+        with open(src) as f:
+            assert key in f.read()            # file left untouched
+
+    def test_fix_all_yes_proceeds_without_prompt(self, tmp_dir, monkeypatch):
+        src, key = self._repo(tmp_dir)
+
+        def _no_prompt(*_a):
+            raise AssertionError('--yes must not prompt')
+        monkeypatch.setattr('builtins.input', _no_prompt)
+        with pytest.raises(SystemExit) as exc:
+            main(['--fix-all', '--yes', tmp_dir])
+        assert exc.value.code == 0
+        with open(src) as f:
+            assert key not in f.read()         # redacted
+
+
+class TestGitUnavailableExit:
+    """L4: --staged/--scan-history in a non-git directory is a hard exit 2, not a
+    false-clean exit 0."""
+
+    def test_staged_non_git_dir_exits_2(self, tmp_dir):
+        with pytest.raises(SystemExit) as exc:
+            main(['--staged', tmp_dir])
+        assert exc.value.code == 2
+
+    def test_scan_history_non_git_dir_exits_2(self, tmp_dir):
+        with pytest.raises(SystemExit) as exc:
+            main(['--scan-history', tmp_dir])
+        assert exc.value.code == 2

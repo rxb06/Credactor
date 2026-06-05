@@ -158,9 +158,10 @@ test_key = "abc123"  # credactor:ignore
 ```
 
 ```xml
-<!-- credactor:ignore -->
-<add key="Password" value="test_only" />
+<add key="Password" value="test_only" />  <!-- credactor:ignore -->
 ```
+
+Suppression is **per-line**: the directive must be on the same line as the secret. A `<!-- credactor:ignore -->` on a separate line above the secret does not carry over.
 
 ### Allowlist
 
@@ -191,6 +192,12 @@ value:aB3/xY9+zQ==.eyJhbGci
 > **Unprefixed entries containing `. / ? *`** are treated as file paths/globs,
 > not value literals. To allowlist a *value* with those characters, use the
 > `value:` prefix.
+
+> **No globstar.** Glob matching uses `fnmatch`, which has no `**` semantics —
+> `**` behaves exactly like `*`, and `*` already matches across `/`. So
+> `src/**/*.py` and `src/*/*.py` match the same set. Very broad patterns (`*`,
+> `*/*`, `**/*.*`, or any pattern with no literal filename segment) are flagged
+> with a warning at load time.
 
 ### Suppression Audit Trail
 
@@ -300,7 +307,7 @@ This prevents recovery of the plaintext credentials from the backup, even with d
 - **Credential masking** — all output formats show only the first 4 characters. `full_value` never appears in logs, reports, or error messages
 - **Crash-safe temp files** — `.credactor.tmp` files are cleaned up in a `finally` block even if the process crashes
 - **Symlink boundary enforcement** — file symlinks resolving outside the scan root are skipped
-- **SARIF output sanitised** — finding metadata is HTML-escaped to prevent injection in downstream consumers
+- **SARIF output** — the whole document is JSON-encoded via `json.dumps` (which guarantees JSON-string safety), and the full secret never appears (only a short preview: the first 4 characters followed by `[REDACTED]`). The rule `type` and the masked preview are additionally HTML-escaped; file paths in `artifactLocation.uri` are not HTML-escaped
 
 ## Output Formats
 

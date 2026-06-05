@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ._log import logger
 from .config import Config
-from .types import Finding
+from .types import SEVERITY_RANK, Finding
 from .utils import detect_encoding, is_within_root
 
 # Maximum number of findings to ingest to prevent memory exhaustion
@@ -126,8 +126,18 @@ def _resolve_external_finding_path(
     missing-file warning, so both ingest_gitleaks and
     ingest_trufflehog share identical handling.
     """
-    resolved = str(Path(os.path.normpath(
-        os.path.join(target_resolved, raw_file))).resolve())
+    try:
+        resolved = str(Path(os.path.normpath(
+            os.path.join(target_resolved, raw_file))).resolve())
+    except ValueError:
+        # L5b: a NUL byte (or similar) in the path makes Path.resolve() raise;
+        # skip just this one finding rather than aborting the whole ingest batch
+        # (the CLI turns an uncaught ValueError here into a fatal exit 2).
+        logger.warning(
+            'Skipping %s finding: path %r is invalid (e.g. embedded NUL).',
+            scanner_name, raw_file,
+        )
+        return None
 
     if not is_within_root(resolved, target_resolved):
         logger.warning(
@@ -145,7 +155,12 @@ def _resolve_external_finding_path(
         return None
 
     if not os.path.isfile(resolved):
-        logger.info('%s finding references missing file: %r', scanner_name, resolved)
+        # L5a: redaction (this tool's primary action) cannot touch a file that
+        # isn't on disk, and a phantom finding inflates counts / exit codes —
+        # skip it (was previously kept with only an info log).
+        logger.warning(
+            '%s finding references missing file %r; skipping.', scanner_name, resolved)
+        return None
 
     return resolved
 
@@ -590,7 +605,7 @@ def deduplicate_findings(
 
     # Pass 2: deduplicate in order; first occurrence wins.
     result: list[Finding] = []
-    seen: set[tuple] = set()
+    seen: dict[tuple, int] = {}
 
     for f in findings:
         base = _base(f)
@@ -602,8 +617,24 @@ def deduplicate_findings(
 
         key = (*base, commit)  # None for working-tree, hash for history
         if key in seen:
+            # L5c: a true duplicate (same file:line:value, same commit) is
+            # dropped — but it must not silently downgrade the survivor's
+            # severity. The native finding wins by source order, yet an external
+            # TruffleHog Verified duplicate may carry 'critical'; merge to the
+            # higher severity so the escalation is honoured (count unchanged).
+            survivor = result[seen[key]]
+            dropped_sev = f.get('severity', 'medium')
+            if (SEVERITY_RANK.get(dropped_sev, 1)
+                    > SEVERITY_RANK.get(survivor.get('severity', 'medium'), 1)):
+                logger.info(
+                    'Dedup raised severity %s -> %s at %s:%s (kept %s, merged %s).',
+                    survivor.get('severity'), dropped_sev,
+                    survivor.get('file'), survivor.get('line'),
+                    survivor.get('type'), f.get('type'),
+                )
+                survivor['severity'] = dropped_sev
             continue
-        seen.add(key)
+        seen[key] = len(result)
         result.append(f)
 
     removed = len(findings) - len(result)

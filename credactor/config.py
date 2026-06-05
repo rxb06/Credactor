@@ -29,6 +29,7 @@ class Config:
     ci_mode: bool = False
     dry_run: bool = False
     fix_all: bool = False
+    assume_yes: bool = False  # L3: skip the --fix-all confirmation prompt
     staged_only: bool = False
     scan_history: bool = False
     scan_json: bool = False

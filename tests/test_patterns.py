@@ -132,9 +132,11 @@ class TestXmlAttr:
         line = '<add value="s3cretP@ssw0rd123!!" key="Password" />'
         results = list(xml_attr_finditer(line))
         assert len(results) >= 1
-        key, val = results[0]
+        key, val, span = results[0]
         assert key == 'Password'
         assert val == 's3cretP@ssw0rd123!!'
+        # L2: the span must locate the value within the line for dedup
+        assert line[span[0]:span[1]] == val
 
     def test_xml_name_variant(self):
         key = 'AKIA' + 'IOSFODNN7EXAMPLE'

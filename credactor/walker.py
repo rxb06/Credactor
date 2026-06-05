@@ -25,6 +25,18 @@ from .types import Finding
 from .utils import is_within_root, log_verbose
 
 
+class GitUnavailableError(RuntimeError):
+    """Git itself is unavailable or the target is not a git repository, for a
+    ``--staged`` / ``--scan-history`` scan (L4).
+
+    The discriminator is ``git rev-parse --show-toplevel``: if that fails the
+    directory isn't a usable repo, so the CLI turns this into a hard exit 2
+    rather than a false-clean exit 0. A later ``git log`` / ``git diff`` failure
+    *inside* a confirmed repo (e.g. a valid repo with zero commits) is NOT this
+    error — it stays a non-fatal empty result.
+    """
+
+
 def _progress_callback_factory(total: int, no_color: bool) -> Callable[[int], None]:
     """Return a callback that prints a progress line to stderr."""
     def _progress(done: int) -> None:
@@ -201,30 +213,34 @@ def scan_staged_files(
     Returns (findings, errored_files).
     """
     root_path = Path(root).resolve()
+    # `git diff --cached` lists paths relative to the repo root, so resolve them
+    # against the toplevel, not the scan root (which may be a subdirectory).
+    # rev-parse is also the not-a-repo discriminator (L4): if it fails the dir is
+    # not a usable repo -> hard GitUnavailableError, not a false-clean result.
     try:
-        # `git diff --cached` lists paths relative to the repo root, so resolve
-        # them against the toplevel, not the scan root (which may be a
-        # subdirectory). Resolve it up front: without a valid toplevel a staged
-        # path can't be placed correctly, so a failure here is fatal rather than
-        # falling back to root_path (which would re-double subdirectory paths).
         top = subprocess.run(
             ['git', 'rev-parse', '--show-toplevel'],
             capture_output=True, text=True, cwd=str(root_path), timeout=30,
         )
-        if top.returncode != 0:
-            logger.error('git rev-parse failed: %s', top.stderr.strip())
-            return [], []
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise GitUnavailableError(f'Cannot run git: {exc}') from exc
+    if top.returncode != 0:
+        raise GitUnavailableError(
+            f'not a git repository (git rev-parse failed): {top.stderr.strip()}')
+    toplevel = Path(top.stdout.strip())
+    try:
         result = subprocess.run(
             ['git', 'diff', '--cached', '--name-only', '-z', '--diff-filter=ACMR'],
             capture_output=True, text=True, cwd=str(root_path), timeout=30,
         )
-        if result.returncode != 0:
-            logger.error('git diff failed: %s', result.stderr.strip())
-            return [], []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        logger.error('Cannot run git: %s', exc)
+        # rev-parse already proved git is usable; a diff failure here is a
+        # non-fatal empty result, not a not-a-repo error.
+        logger.error('git diff failed: %s', exc)
         return [], []
-    toplevel = Path(top.stdout.strip())
+    if result.returncode != 0:
+        logger.error('git diff failed: %s', result.stderr.strip())
+        return [], []
     # -z yields NUL-separated, unquoted paths: a unicode/special-char filename
     # would otherwise be octal-quoted and silently skipped (a staged-secret miss).
     raw_staged = [p for p in result.stdout.split('\0') if p]
@@ -301,6 +317,22 @@ def scan_git_history(
 ) -> list[Finding]:
     """Scan ``git log -p`` output for credentials in committed history."""
     root_path = Path(root).resolve()
+    # L4: `git rev-parse --git-dir` is the not-a-repo discriminator (rc 0 in
+    # normal, bare, AND empty repos; rc 128 only when there is no repo). Unlike
+    # --show-toplevel it doesn't require a work tree, so a bare repo — a canonical
+    # --scan-history target — isn't falsely rejected. A valid repo with zero
+    # commits makes `git log` exit non-zero, but rev-parse passes, so that stays a
+    # non-fatal empty result; only a rev-parse failure is GitUnavailableError.
+    try:
+        probe = subprocess.run(
+            ['git', 'rev-parse', '--git-dir'],
+            capture_output=True, text=True, cwd=str(root_path), timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise GitUnavailableError(f'Cannot run git: {exc}') from exc
+    if probe.returncode != 0:
+        raise GitUnavailableError(
+            f'not a git repository (git rev-parse failed): {probe.stderr.strip()}')
     try:
         result = subprocess.run(
             ['git', 'log', f'-{max_commits}', '-p', '--diff-filter=ACMR',
@@ -308,6 +340,7 @@ def scan_git_history(
             capture_output=True, text=True, cwd=str(root_path), timeout=120,
         )
         if result.returncode != 0:
+            # e.g. a valid repo with no commits yet — nothing to scan, not fatal.
             logger.error('git log failed: %s', result.stderr.strip())
             return []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:

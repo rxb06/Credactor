@@ -19,7 +19,13 @@ from .report import json_report, print_gitignore_skipped, print_report, sarif_re
 from .scanner import scan_file
 from .suppressions import AllowList
 from .types import Finding
-from .walker import scan_git_history, scan_staged_files, select_json_files, walk_and_scan
+from .walker import (
+    GitUnavailableError,
+    scan_git_history,
+    scan_staged_files,
+    select_json_files,
+    walk_and_scan,
+)
 
 # Guard against scanning system/sensitive directories — an exact match against
 # the resolved scan target rejects requests to scan well-known system roots.
@@ -113,8 +119,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mode.add_argument(
         '--fix-all', action='store_true',
-        help='replace all findings in a single batch without prompting; '
-             'asks for confirmation before proceeding',
+        help='replace all findings in a single batch (no per-finding prompts); '
+             'asks for one confirmation before proceeding — pass --yes to skip it '
+             'in non-interactive/CI runs',
+    )
+    mode.add_argument(
+        '--yes', '-y', action='store_true', dest='assume_yes',
+        help='skip the --fix-all confirmation prompt; required for '
+             'non-interactive use (a piped/CI run without a TTY otherwise aborts)',
     )
     mode.add_argument(
         '--staged', action='store_true',
@@ -270,6 +282,7 @@ def _config_from_args(args: argparse.Namespace) -> Config:
         ci_mode=args.ci,
         dry_run=args.dry_run,
         fix_all=args.fix_all,
+        assume_yes=args.assume_yes,
         staged_only=args.staged,
         scan_history=args.scan_history,
         scan_json=args.scan_json,
@@ -425,14 +438,20 @@ def _handle_fix_all(findings: list[Finding], target: str, config: Config) -> int
         print('  │  another recovery mechanism before proceeding.         │')
         print('  └─────────────────────────────────────────────────────────┘')
     print('  Tip: run with --dry-run first to preview changes.')
-    try:
-        answer = input('  Proceed? [y/N]: ').strip().lower()
-    except (KeyboardInterrupt, EOFError):
-        print('\n  Aborted.')
-        sys.exit(1)
-    if answer not in ('y', 'yes'):
-        print('  Aborted.')
-        sys.exit(1)
+    # L3: --yes skips the interactive gate for non-interactive/CI use. Without it
+    # a non-TTY stdin (pipe, </dev/null) raises EOFError below and aborts — the
+    # documented behavior, now with an explicit opt-in instead of a footgun.
+    if config.assume_yes:
+        print('  Proceeding (--yes).')
+    else:
+        try:
+            answer = input('  Proceed? [y/N]: ').strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print('\n  Aborted.')
+            sys.exit(1)
+        if answer not in ('y', 'yes'):
+            print('  Aborted.')
+            sys.exit(1)
     return fix_all(findings, target, config)
 
 
@@ -446,11 +465,16 @@ def _collect_findings(
     Returns ``(findings, errored_files)``. Also runs the JSON-file
     side-walk when ``--scan-json`` is set in directory mode.
     """
-    if config.staged_only:
-        return scan_staged_files(target, config, allowlist)
-
-    if config.scan_history:
-        return scan_git_history(target, config, allowlist), []
+    # L4: a not-a-repo / git-unavailable failure for --staged/--scan-history is a
+    # hard error (exit 2), never a false-clean exit 0.
+    try:
+        if config.staged_only:
+            return scan_staged_files(target, config, allowlist)
+        if config.scan_history:
+            return scan_git_history(target, config, allowlist), []
+    except GitUnavailableError as exc:
+        logger.error('%s', exc)
+        sys.exit(2)
 
     # H1: an explicitly-named file is scanned directly — os.walk() on a file
     # yields nothing, so routing a file target through walk_and_scan silently

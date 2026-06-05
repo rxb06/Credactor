@@ -237,8 +237,17 @@ def _create_backup(filepath: str, config: Config) -> str | None:
             shutil.move(bak, dest)
             return dest
         except OSError as exc:
-            logger.warning('Could not move backup to %s: %s', dest_dir, exc)
-            # Fall through — backup still exists at original location
+            # L10: fail-closed (matches the symlink branch above). The user
+            # asked for backups OUTSIDE the repo; if that's impossible, do NOT
+            # silently leave a plaintext .bak inside the repo and redact anyway.
+            # Clean up the in-repo bak and return None so the caller skips this
+            # file (no backup, no redaction).
+            logger.error(
+                'Could not move backup to %s: %s — refusing to leave a plaintext '
+                'backup inside the repo; skipping this file.', dest_dir, exc)
+            with contextlib.suppress(OSError):
+                os.unlink(bak)
+            return None
     return bak
 
 

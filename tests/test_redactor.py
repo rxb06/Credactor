@@ -359,6 +359,32 @@ class TestSecureBackupDirSymlink:
         assert not (os.path.isdir(escaped) and os.listdir(escaped))
 
 
+class TestSecureBackupDirUnwritable:
+    """L10: an unwritable --secure-backup-dir fails closed — no in-repo .bak is
+    left behind and the file is not redacted (matches the symlink branch)."""
+
+    @pytest.mark.skipif(
+        sys.platform == 'win32' or (hasattr(os, 'getuid') and os.getuid() == 0),
+        reason='chmod-based unwritability is unreliable on Windows / as root')
+    def test_unwritable_backup_dir_fails_closed(self, make_file, tmp_dir):
+        ro_parent = os.path.join(tmp_dir, 'ro')
+        os.makedirs(ro_parent)
+        os.chmod(ro_parent, 0o500)   # read+execute, no write -> mkdir fails
+        try:
+            config = Config(secure_backup_dir=os.path.join(ro_parent, 'backups'))
+            path = make_file('s.py', f'api_key = "{_AWS_KEY}"\n')
+            finding = {'file': path, 'line': 1, 'type': 'variable:api_key',
+                       'severity': 'high', 'full_value': _AWS_KEY,
+                       'value_preview': '', 'raw': ''}
+            replaced, _ = batch_replace_in_file(path, [finding], config)
+            assert replaced == 0                       # fail-closed: skipped
+            assert not os.path.exists(path + '.bak')   # no in-repo bak left
+            with open(path) as f:
+                assert _AWS_KEY in f.read()            # file unchanged
+        finally:
+            os.chmod(ro_parent, 0o700)
+
+
 class TestEnvRefForLanguage:
     """SEC-30: Verify bracket notation for JS and quoting for other languages."""
 

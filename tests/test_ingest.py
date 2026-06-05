@@ -651,12 +651,15 @@ class TestTrufflehogRawSynthesis:
         results = ingest_trufflehog(str(report), str(target))
         assert results[0]['raw'] == 'aws_key = "AKIAIOSFODNN7EXAMPLE"'
 
-    def test_trufflehog_raw_fallback_on_missing_file(self, tmp_path):
-        """Unreadable/missing file falls back to Raw value for raw field."""
+    def test_trufflehog_raw_fallback_on_unreadable_line(self, tmp_path):
+        """An out-of-range source line falls back to the Raw value for the raw
+        field. (L5a now skips a genuinely missing file, so this exercises the
+        fallback via an existing file whose referenced line is past EOF.)"""
         target, _ = _make_th_target(tmp_path)
-        # Reference a file that doesn't exist
         finding = _make_trufflehog_finding()
-        finding['SourceMetadata']['Data']['Filesystem']['file'] = 'src/nonexistent.py'
+        # File exists, but the line number is past EOF -> source line unavailable
+        finding['SourceMetadata']['Data']['Filesystem']['file'] = 'src/config.py'
+        finding['SourceMetadata']['Data']['Filesystem']['line'] = 999
         from credactor.ingest import _read_file_lines
         _read_file_lines.cache_clear()
         report = _write_ndjson(tmp_path, [finding])
@@ -871,6 +874,48 @@ def _make_finding(
 # Phase 3: Deduplication tests
 # ---------------------------------------------------------------------------
 
+class TestIngestMissingAndInvalidPaths:
+    """L5a/L5b: a finding pointing at a missing file is skipped; a NUL-byte path
+    skips only that finding rather than aborting the whole batch."""
+
+    def test_gitleaks_missing_file_on_disk_skipped(self, tmp_path, credactor_caplog):
+        target, _ = _make_target(tmp_path)
+        report = _write_report(tmp_path, [_make_gitleaks_finding(File='src/ghost.py')])
+        results = ingest_gitleaks(str(report), str(target))
+        assert results == []
+        assert any('missing file' in r.message for r in credactor_caplog.records)
+
+    def test_trufflehog_missing_file_on_disk_skipped(self, tmp_path, credactor_caplog):
+        target, _ = _make_th_target(tmp_path)
+        finding = _make_trufflehog_finding()
+        finding['SourceMetadata']['Data']['Filesystem']['file'] = 'src/ghost.py'
+        report = _write_ndjson(tmp_path, [finding])
+        results = ingest_trufflehog(str(report), str(target))
+        assert results == []
+        assert any('missing file' in r.message for r in credactor_caplog.records)
+
+    def test_gitleaks_nul_path_skips_one_not_batch(self, tmp_path, credactor_caplog):
+        target, _ = _make_target(tmp_path)
+        good = _make_gitleaks_finding(File='src/config.py', StartLine=1)
+        bad = _make_gitleaks_finding(File='a\x00b')
+        report = _write_report(tmp_path, [good, bad])
+        results = ingest_gitleaks(str(report), str(target))   # must NOT raise
+        assert len(results) == 1
+        assert any('invalid' in r.message.lower() or 'nul' in r.message.lower()
+                   for r in credactor_caplog.records)
+
+    def test_trufflehog_nul_path_skips_one_not_batch(self, tmp_path, credactor_caplog):
+        target, _ = _make_th_target(tmp_path)
+        good = _make_trufflehog_finding()
+        bad = _make_trufflehog_finding()
+        bad['SourceMetadata']['Data']['Filesystem']['file'] = 'a\x00b'
+        report = _write_ndjson(tmp_path, [good, bad])
+        results = ingest_trufflehog(str(report), str(target))   # must NOT raise
+        assert len(results) == 1
+        assert any('invalid' in r.message.lower() or 'nul' in r.message.lower()
+                   for r in credactor_caplog.records)
+
+
 class TestDeduplication:
     """Tests for deduplicate_findings() — section 7 of the plan."""
 
@@ -908,6 +953,24 @@ class TestDeduplication:
         result = deduplicate_findings([native, external])
         assert len(result) == 1
         assert result[0]['type'] == 'pattern:AWS access key'
+
+    def test_dedup_merges_higher_severity_from_dropped_dup(self):
+        """L5c: a native 'medium' kept over an external Verified 'critical' dup is
+        raised to 'critical' (identity preserved, count unchanged)."""
+        native = _make_finding(ftype='variable:api_key', severity='medium')
+        external = _make_finding(ftype='external:trufflehog:AWS', severity='critical')
+        result = deduplicate_findings([native, external])
+        assert len(result) == 1
+        assert result[0]['type'] == 'variable:api_key'   # native identity kept
+        assert result[0]['severity'] == 'critical'        # severity merged up
+
+    def test_dedup_does_not_lower_survivor_severity(self):
+        """L5c: a lower-severity dropped dup must not downgrade the survivor."""
+        native = _make_finding(ftype='pattern:AWS access key', severity='critical')
+        external = _make_finding(ftype='external:trufflehog:AWS', severity='medium')
+        result = deduplicate_findings([native, external])
+        assert len(result) == 1
+        assert result[0]['severity'] == 'critical'
 
     def test_dedup_gitleaks_preferred_over_trufflehog(self):
         """Gitleaks finding (second) is kept over TruffleHog (third) dup."""
@@ -1105,14 +1168,19 @@ class TestA2UrlDecodeFormSelection:
         assert results[0]['full_value'] == 'AKIAIOSFODNN7EXAMPLE'
 
     def test_decoded_default_when_source_unavailable(self, tmp_path):
-        """When source line cannot be read, decoded form is used as the safe default."""
+        """When the source line cannot be read, the decoded form is the safe
+        default. (L5a now skips a missing file outright, so this uses an existing
+        file with an out-of-range line to leave the source line unreadable.)"""
         target = tmp_path / 'repo'
-        target.mkdir()
-        # Point finding at a file that doesn't exist — synthesis returns ''
+        src = target / 'src'
+        src.mkdir(parents=True)
+        (src / 'config.py').write_text('x = 1\n', encoding='utf-8')
         finding = _make_trufflehog_finding(
             Raw='postgresql://user:p%40ss@host:5432',
-            SourceMetadata={'Data': {'Filesystem': {'file': 'nonexistent.py', 'line': 1}}},
+            SourceMetadata={'Data': {'Filesystem': {'file': 'src/config.py', 'line': 999}}},
         )
+        from credactor.ingest import _read_file_lines
+        _read_file_lines.cache_clear()
         report = _write_ndjson(tmp_path, [finding])
         results = ingest_trufflehog(str(report), str(target))
         assert len(results) == 1

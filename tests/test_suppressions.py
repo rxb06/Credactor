@@ -42,6 +42,15 @@ class TestInlineSuppression:
         line = f'aws = "{key}"  # TODO: drop credactor:ignore usage'
         assert len(scan_line(1, line, 't.py')) == 1
 
+    def test_same_line_xml_suppression_end_to_end(self):
+        """L7: a same-line `<!-- credactor:ignore -->` suppresses the XML secret
+        (the docs now show the directive on the same line, which works)."""
+        from credactor.config import Config
+        from credactor.scanner import scan_line
+        val = 'Xy9KmL2vQ7nR5tW8pA3bC6dE'   # high-entropy XML value
+        line = f'<add key="Password" value="{val}" />  <!-- credactor:ignore -->'
+        assert scan_line(1, line, 'web.config', config=Config()) == []
+
 
 class TestAllowList:
     def test_file_glob_suppression(self, tmp_dir):
@@ -160,4 +169,52 @@ class TestAllowList:
             f.write('src/config.py:10\n')
         AllowList(tmp_dir)
         assert any('file:line' in r.message and 'line number only' in r.message
+                   for r in credactor_caplog.records)
+
+    # --- L6b: catch-all glob patterns warn (fnmatch has no globstar) ---
+    def test_broad_glob_patterns_warn(self, tmp_dir, credactor_caplog):
+        for pat in ('*/*', '**/*.*', '*/*/*'):
+            credactor_caplog.clear()
+            ignore_path = os.path.join(tmp_dir, '.credactorignore')
+            with open(ignore_path, 'w') as f:
+                f.write(pat + '\n')
+            AllowList(tmp_dir)
+            assert any('overly broad' in r.message
+                       for r in credactor_caplog.records), pat
+
+    def test_narrow_glob_does_not_warn_broad(self, tmp_dir, credactor_caplog):
+        ignore_path = os.path.join(tmp_dir, '.credactorignore')
+        with open(ignore_path, 'w') as f:
+            f.write('tests/fixtures/*.py\n')
+        AllowList(tmp_dir)
+        assert not any('overly broad' in r.message for r in credactor_caplog.records)
+
+    # --- L11: suppression_reason discriminates the matched kind ---
+    def test_suppression_reason_discriminates(self, tmp_dir):
+        ignore_path = os.path.join(tmp_dir, '.credactorignore')
+        with open(ignore_path, 'w') as f:
+            f.write('globbed/*.py\n')
+            f.write('src/exact.py:7\n')
+            f.write('value:my_secret_literal\n')
+        al = AllowList(tmp_dir)
+        glob_file = os.path.join(tmp_dir, 'globbed', 'a.py')
+        line_file = os.path.join(tmp_dir, 'src', 'exact.py')
+        assert al.suppression_reason(glob_file, 1, 'x') == 'glob'
+        assert al.suppression_reason(line_file, 7, 'x') == 'file:line'
+        assert al.suppression_reason(line_file, 8, 'my_secret_literal') == 'value-literal'
+        assert al.suppression_reason(line_file, 8, 'other') is None
+        # is_suppressed stays consistent with suppression_reason
+        assert al.is_suppressed(glob_file, 1, 'x') is True
+        assert al.is_suppressed(line_file, 8, 'other') is False
+
+    def test_verbose_audit_names_suppression_kind(self, tmp_dir, credactor_caplog):
+        from credactor.config import Config
+        from credactor.scanner import scan_line
+        ignore_path = os.path.join(tmp_dir, '.credactorignore')
+        with open(ignore_path, 'w') as f:
+            f.write('value:AKIAIOSFODNN7EXAMPLE\n')
+        al = AllowList(tmp_dir)
+        scan_line(1, 'key = "AKIA' + 'IOSFODNN7EXAMPLE"',
+                  os.path.join(tmp_dir, 'app.py'), config=Config(), allowlist=al)
+        assert any('allowlist (value-literal)' in r.message
                    for r in credactor_caplog.records)

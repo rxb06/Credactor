@@ -395,3 +395,107 @@ class TestCommentProviderScan:
                '.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U')
         assert len(scan_line(1, jwt, 'a.py', config=config)) == 1
         assert len(scan_line(1, f'# {jwt}', 'a.py', config=config)) == 0
+
+
+class TestCompactJwt:
+    """L1: a compact JWT (all 3 segments <=40 chars) must not be dropped as
+    dotted-property access, while real dotted access stays safe."""
+
+    _COMPACT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.aZ9bY8cX7dW6eV5f'
+
+    def test_compact_jwt_detected(self, config):
+        findings = scan_line(1, f'token = "{self._COMPACT}"', 'a.py', config=config)
+        assert any('JWT token' in f['type'] for f in findings), findings
+
+    def test_dotted_access_still_safe(self, config):
+        for v in ('self.config.password', 'context.config.apiKey'):
+            assert scan_line(1, f'x = {v}', 'a.py', config=config) == [], v
+
+    def test_realistic_long_jwt_still_detected(self, config):
+        jwt = ('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
+               '.eyJzdWIiOiIxMjM0NTY3ODkwIn0'
+               '.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U')
+        findings = scan_line(1, f'token = "{jwt}"', 'a.py', config=config)
+        assert any('JWT token' in f['type'] for f in findings)
+
+
+class TestMultipleSecretsPerLine:
+    """L2: distinct secrets on one line are all reported; one secret matched by
+    several patterns/passes is still reported exactly once."""
+
+    _AWS = 'AKIA' + 'IOSFODNN7EXAMPLE'
+
+    def test_two_distinct_secrets_both_reported(self, config):
+        conn = 'postgres://u:pw' + '@h.example.com/db'
+        line = f'url = "{conn}"; key = "{self._AWS}"'
+        findings = scan_line(1, line, 'a.py', config=config)
+        types = ' '.join(f['type'] for f in findings)
+        assert len(findings) == 2, findings
+        assert 'AWS access key' in types and 'connection string' in types
+
+    def test_single_hex_not_double_reported(self, config):
+        # a 64-char hex matches BOTH the hex and base64 patterns -> ONE finding
+        h = '0123456789abcdef' * 4   # 64 chars, entropy 4.0 (clears both floors)
+        findings = scan_line(1, f'token = "{h}"', 'a.py', config=config)
+        assert len(findings) == 1, findings
+
+    def test_aws_and_password_cross_pass(self, config):
+        line = f'key = "{self._AWS}"; password = "Summer2024!"'
+        findings = scan_line(1, line, 'a.py', config=config)
+        types = ' '.join(f['type'] for f in findings)
+        assert len(findings) == 2, findings
+        assert 'AWS access key' in types and 'variable:password' in types
+
+    def test_single_secret_cross_pass_collapses(self, config):
+        # `api_key = "AKIA..."` matches BOTH pass-1 (AWS pattern) and pass-3
+        # (api_key assignment) on the same span -> ONE finding (critical AWS wins)
+        findings = scan_line(1, f'api_key = "{self._AWS}"', 'a.py', config=config)
+        assert len(findings) == 1, findings
+        assert 'AWS access key' in findings[0]['type']
+
+    def test_dedup_keeps_higher_severity_discovered_later(self):
+        # the dedup priority branch: a higher-severity candidate with a LATER
+        # discovery index must still win over an overlapping lower-severity one
+        from credactor.scanner import _dedup_findings
+        low = (0, 10, {'type': 'low', 'severity': 'low', 'file': 'f', 'line': 1,
+                       'full_value': 'x', 'value_preview': 'x', 'raw': ''})
+        crit = (0, 10, {'type': 'crit', 'severity': 'critical', 'file': 'f', 'line': 1,
+                        'full_value': 'x', 'value_preview': 'x', 'raw': ''})
+        result = _dedup_findings([low, crit])
+        assert len(result) == 1
+        assert result[0]['severity'] == 'critical'
+
+
+class TestProviderEntropyFloor:
+    """L12: deterministic provider tokens are detected regardless of entropy."""
+
+    _AWS = 'AKIA' + 'IOSFODNN7EXAMPLE'
+
+    def test_low_entropy_aws_token_detected(self, config):
+        tok = 'AKIA' + 'A' * 16   # format-valid, near-zero entropy
+        findings = scan_line(1, f'key = "{tok}"', 'a.py', config=config)
+        assert any('AWS access key' in f['type'] for f in findings), findings
+
+    def test_low_entropy_github_token_detected(self, config):
+        tok = 'ghp_' + 'a' * 36
+        findings = scan_line(1, f'tok = "{tok}"', 'a.py', config=config)
+        assert any('GitHub token' in f['type'] for f in findings), findings
+
+    def test_realistic_aws_still_detected(self, config):
+        findings = scan_line(1, f'key = "{self._AWS}"', 'a.py', config=config)
+        assert any('AWS access key' in f['type'] for f in findings)
+
+    @pytest.mark.parametrize('tok', [
+        'AKIA' + 'A' * 16,            # AWS
+        'ghp_' + 'a' * 36,            # GitHub
+        'glpat-' + 'a' * 20,          # GitLab
+        'AIza' + 'A' * 35,            # GCP
+        'npm_' + 'a' * 36,            # npm
+        'xoxb-' + '1' * 20,           # Slack
+        'sk_live_' + '0' * 24,        # Stripe live
+        'pypi-' + 'a' * 16,           # PyPI
+    ])
+    def test_low_entropy_provider_tokens_detected(self, config, tok):
+        # all 8 deterministic provider rows must fire at 0.0 entropy
+        findings = scan_line(1, f'k = "{tok}"', 'a.py', config=config)
+        assert findings, tok

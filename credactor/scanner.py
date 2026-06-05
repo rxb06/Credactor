@@ -25,7 +25,7 @@ from .patterns import (
     xml_attr_finditer,
 )
 from .suppressions import AllowList, has_inline_suppression
-from .types import Finding
+from .types import SEVERITY_RANK, Finding
 from .utils import detect_encoding, entropy, log_verbose
 
 # Global defaults (can be overridden by Config)
@@ -102,8 +102,16 @@ def _preview(val: str, n: int = 60) -> str:
     return val[:n] + ('...' if len(val) > n else '')
 
 
-def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
-    """Return True if the value is clearly NOT a real hardcoded credential."""
+def _is_safe_value(val: str, extra_safe: set[str] | None = None,
+                   *, skip_dotted_access: bool = False) -> bool:
+    """Return True if the value is clearly NOT a real hardcoded credential.
+
+    ``skip_dotted_access`` (L1): when True, the dotted-property-access heuristic
+    is bypassed. A compact JWT whose three segments are each <=40 chars matches
+    ``_DOTTED_ACCESS_RE`` and would be wrongly treated as runtime access; the
+    caller sets this only for values already matched by the deterministic JWT
+    regex, so ordinary dotted access (``self.config.password``) is unaffected.
+    """
     raw = val.strip()
     cleaned = raw.lower().strip('"\'')
 
@@ -151,7 +159,7 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None) -> bool:
 
     # Dotted property access: self.config.password, context.config.apiKey
     # Runtime references, not hardcoded values
-    if _DOTTED_ACCESS_RE.match(raw):
+    if not skip_dotted_access and _DOTTED_ACCESS_RE.match(raw):
         return True
 
     # File paths: ./, ~/, Windows drive letter
@@ -234,6 +242,11 @@ def scan_line(
 
     is_comment = stripped.startswith('#') or stripped.startswith('//')
 
+    # Candidates carry a transient (start, end) char span alongside each Finding
+    # for cross-pass span dedup (L2). The span lives in a parallel tuple so the
+    # Finding TypedDict stays clean.
+    candidates: list[tuple[int, int, Finding]] = []
+
     # --- 1. High-value VALUE_PATTERNS scan ---
     for pattern, label, min_ent, severity in VALUE_PATTERNS:
         # M3: on comment lines, scan only the deterministic provider prefixes
@@ -260,7 +273,10 @@ def scan_line(
                 log_verbose(config, f'{filepath}:{lineno} suppressed by hash context')
                 continue
 
-            if _is_safe_value(val, extra_safe):
+            # L1: a compact JWT (all 3 segments <=40 chars) matches
+            # _DOTTED_ACCESS_RE inside _is_safe_value and would be dropped; bypass
+            # that one heuristic for JWT-matched tokens only.
+            if _is_safe_value(val, extra_safe, skip_dotted_access=(label == 'JWT token')):
                 log_verbose(config, f'{filepath}:{lineno} suppressed by safe value heuristic')
                 continue
             if len(val) < min_len and label != 'private key header':
@@ -268,12 +284,13 @@ def scan_line(
             if min_ent > 0 and entropy(val) < min_ent:
                 continue
 
-            # Allowlist check
-            if allowlist and allowlist.is_suppressed(filepath, lineno, val):
-                log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist')
+            # Allowlist check (L11: record which kind matched)
+            reason = allowlist.suppression_reason(filepath, lineno, val) if allowlist else None
+            if reason:
+                log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist ({reason})')
                 continue
 
-            findings.append({
+            candidates.append((match.start(), match.end(), {
                 'file':          filepath,
                 'line':          lineno,
                 'type':          f'pattern:{label}',
@@ -281,13 +298,11 @@ def scan_line(
                 'full_value':    val,
                 'value_preview': _preview(val),
                 'raw':           line.rstrip(),
-            })
-        if findings:
-            return findings
+            }))
 
     # --- 2. XML attribute check (#21) ---
     if not is_comment:
-        for xml_key, xml_val in xml_attr_finditer(line):
+        for xml_key, xml_val, xml_span in xml_attr_finditer(line):
             if not CRED_VAR_PATTERNS.search(xml_key):
                 continue
             if _is_safe_value(xml_val, extra_safe):
@@ -297,10 +312,11 @@ def scan_line(
                 continue
             if entropy(xml_val.strip()) < ent_threshold:
                 continue
-            if allowlist and allowlist.is_suppressed(filepath, lineno, xml_val):
-                log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist')
+            reason = allowlist.suppression_reason(filepath, lineno, xml_val) if allowlist else None
+            if reason:
+                log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist ({reason})')
                 continue
-            findings.append({
+            candidates.append((xml_span[0], xml_span[1], {
                 'file':          filepath,
                 'line':          lineno,
                 'type':          f'xml-attr:{xml_key}',
@@ -308,60 +324,89 @@ def scan_line(
                 'full_value':    xml_val,
                 'value_preview': _preview(xml_val),
                 'raw':           line.rstrip(),
-            })
-        if findings:
-            return findings
+            }))
 
     # --- 3. Assignment check ---
-    if is_comment and '=' not in line and ':' not in line:
-        return findings
-    if is_comment and any(kw in stripped for kw in ('def ', 'async def ', 'class ')):
-        return findings
+    # L2: pass 3 is skipped (not early-returned) under these conditions so passes
+    # 1/2 candidates still reach the dedup.
+    run_assignment = not (
+        (is_comment and '=' not in line and ':' not in line)
+        or (is_comment and any(kw in stripped for kw in ('def ', 'async def ', 'class ')))
+        or stripped.startswith(('def ', 'async def ', 'class '))
+        or DYNAMIC_LOOKUP_RE.search(line)
+    )
 
-    if stripped.startswith(('def ', 'async def ', 'class ')):
-        return findings
+    if run_assignment:
+        for match in ASSIGNMENT_RE.finditer(line):
+            var = match.group('var')
+            # #13 fix: use the correct capture group (quoted vs unquoted)
+            grp = 'val_q' if match.group('val_q') else 'val_u'
+            val = match.group(grp) or ''
 
-    if DYNAMIC_LOOKUP_RE.search(line):
-        return findings
+            if not CRED_VAR_PATTERNS.search(var):
+                continue
+            # Skip hash/digest/checksum storage — these are derived values
+            low_var = var.lower()
+            if any(low_var.endswith(s) for s in _HASH_VAR_SUFFIXES):
+                continue
+            if _is_safe_value(val, extra_safe):
+                log_verbose(config, f'{filepath}:{lineno} suppressed by safe value heuristic')
+                continue
+            val_stripped = val.strip()
+            if len(val_stripped) < min_len:
+                continue
+            # H7: a password-family variable gets a lower entropy floor so memorable
+            # weak passwords (e.g. "Summer2024!") are not silently dropped.
+            floor = (min(ent_threshold, PASSWORD_ENTROPY_FLOOR)
+                     if _is_password_family(var) else ent_threshold)
+            if entropy(val_stripped) < floor:
+                continue
+            reason = (allowlist.suppression_reason(filepath, lineno, val_stripped)
+                      if allowlist else None)
+            if reason:
+                log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist ({reason})')
+                continue
 
-    for match in ASSIGNMENT_RE.finditer(line):
-        var = match.group('var')
-        # #13 fix: use the correct capture group (quoted vs unquoted)
-        val = match.group('val_q') or match.group('val_u') or ''
+            candidates.append((match.start(grp), match.end(grp), {
+                'file':          filepath,
+                'line':          lineno,
+                'type':          f'variable:{var}',
+                'severity':      _severity_for_variable(var),
+                'full_value':    val_stripped,
+                'value_preview': _preview(val_stripped),
+                'raw':           line.rstrip(),
+            }))
 
-        if not CRED_VAR_PATTERNS.search(var):
-            continue
-        # Skip hash/digest/checksum storage — these are derived values
-        low_var = var.lower()
-        if any(low_var.endswith(s) for s in _HASH_VAR_SUFFIXES):
-            continue
-        if _is_safe_value(val, extra_safe):
-            log_verbose(config, f'{filepath}:{lineno} suppressed by safe value heuristic')
-            continue
-        val_stripped = val.strip()
-        if len(val_stripped) < min_len:
-            continue
-        # H7: a password-family variable gets a lower entropy floor so memorable
-        # weak passwords (e.g. "Summer2024!") are not silently dropped.
-        floor = (min(ent_threshold, PASSWORD_ENTROPY_FLOOR)
-                 if _is_password_family(var) else ent_threshold)
-        if entropy(val_stripped) < floor:
-            continue
-        if allowlist and allowlist.is_suppressed(filepath, lineno, val_stripped):
-            log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist')
-            continue
+    return _dedup_findings(candidates)
 
-        findings.append({
-            'file':          filepath,
-            'line':          lineno,
-            'type':          f'variable:{var}',
-            'severity':      _severity_for_variable(var),
-            'full_value':    val_stripped,
-            'value_preview': _preview(val_stripped),
-            'raw':           line.rstrip(),
-        })
 
-    return findings
+def _dedup_findings(candidates: list[tuple[int, int, Finding]]) -> list[Finding]:
+    """Collapse findings whose character spans overlap on the same line, keeping
+    the highest-priority one (L2).
+
+    A single secret matched by several patterns/passes (e.g. a 64-char hex hits
+    both the hex and base64 patterns; an ``api_key = "AKIA..."`` hits both the
+    AWS pattern and the assignment pass) is reported once, while genuinely
+    distinct secrets on one line are all kept. Priority: higher severity first,
+    then discovery order (VALUE_PATTERNS severity order, then XML, then
+    assignment), so the most specific label wins ties.
+    """
+    if len(candidates) <= 1:
+        return [f for _s, _e, f in candidates]
+    order = sorted(
+        range(len(candidates)),
+        key=lambda i: (-SEVERITY_RANK.get(candidates[i][2]['severity'], 0), i),
+    )
+    kept_spans: list[tuple[int, int]] = []
+    kept: set[int] = set()
+    for i in order:
+        s, e, _f = candidates[i]
+        if any(s < ke and ks < e for ks, ke in kept_spans):
+            continue  # overlaps an already-kept, higher-priority finding
+        kept_spans.append((s, e))
+        kept.add(i)
+    # Emit in discovery order for stable output.
+    return [candidates[i][2] for i in range(len(candidates)) if i in kept]
 
 
 def scan_file(
@@ -413,7 +458,12 @@ def scan_file(
             # Check suppression — still skip body lines even if header suppressed
             if has_inline_suppression(line):
                 continue
-            if allowlist and allowlist.is_suppressed(filepath, lineno, line.strip()):
+            # L11: the PEM-block suppression was previously absent from the
+            # --verbose audit trail — log which allowlist rule fired.
+            reason = (allowlist.suppression_reason(filepath, lineno, line.strip())
+                      if allowlist else None)
+            if reason:
+                log_verbose(config, f'{filepath}:{lineno} suppressed by allowlist ({reason})')
                 continue
             findings.append({
                 'file':          filepath,
@@ -501,7 +551,13 @@ def _scan_multiline_strings(
                         continue
                     if min_ent > 0 and entropy(val) < min_ent:
                         continue
-                    if allowlist and allowlist.is_suppressed(filepath, block_lineno, val):
+                    # L11: multiline suppression was previously absent from the
+                    # --verbose audit trail — log which allowlist rule fired.
+                    reason = (allowlist.suppression_reason(filepath, block_lineno, val)
+                              if allowlist else None)
+                    if reason:
+                        log_verbose(config, f'{filepath}:{block_lineno} suppressed '
+                                            f'by allowlist ({reason})')
                         continue
                     existing_findings.append({
                         'file':          filepath,

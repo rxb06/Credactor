@@ -155,15 +155,22 @@ _PEM_KEY_RE = re.compile(r'-----BEGIN\s+(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY--
 
 # severity: critical > high > medium > low
 VALUE_PATTERNS = [
-    # Deterministic provider prefixes — critical severity
-    (_AWS_RE,          'AWS access key',       3.0, 'critical'),
-    (_GCP_RE,          'GCP API key',          3.0, 'critical'),
-    (_STRIPE_LIVE_RE,  'Stripe live key',      3.0, 'critical'),
-    (_GITHUB_RE,       'GitHub token',         3.0, 'critical'),
-    (_GITLAB_RE,       'GitLab token',         3.0, 'critical'),
-    (_SLACK_RE,        'Slack token',          3.0, 'critical'),
-    (_NPM_RE,          'npm token',            3.0, 'critical'),
-    (_PYPI_RE,         'PyPI token',           3.0, 'critical'),
+    # Deterministic provider prefixes — critical severity. L12: min_entropy 0.0
+    # because the fixed prefix + length already constrains the format, so the
+    # entropy gate is redundant and would otherwise drop a format-valid but
+    # low-entropy leaked token (a prefix + all-constant body). Matches the PEM
+    # row, which already uses 0.0. Intentional FP-over-FN tradeoff: format-valid
+    # placeholders (e.g. an AKIA + constant body in a .env.example) are also
+    # flagged — a false positive is noise, a missed live key is a leak. Suppress
+    # known placeholders via .credactorignore.
+    (_AWS_RE,          'AWS access key',       0.0, 'critical'),
+    (_GCP_RE,          'GCP API key',          0.0, 'critical'),
+    (_STRIPE_LIVE_RE,  'Stripe live key',      0.0, 'critical'),
+    (_GITHUB_RE,       'GitHub token',         0.0, 'critical'),
+    (_GITLAB_RE,       'GitLab token',         0.0, 'critical'),
+    (_SLACK_RE,        'Slack token',          0.0, 'critical'),
+    (_NPM_RE,          'npm token',            0.0, 'critical'),
+    (_PYPI_RE,         'PyPI token',           0.0, 'critical'),
     (_PEM_KEY_RE,      'private key header',   0.0, 'critical'),
     # Structural patterns — high severity
     (_JWT_RE,          'JWT token',            3.3, 'high'),
@@ -215,14 +222,16 @@ _XML_VAL_FIRST = re.compile(
 
 
 def xml_attr_finditer(line: str):
-    """Yield (xml_key, xml_val) from XML attribute matches in either order."""
+    """Yield ``(xml_key, xml_val, val_span)`` from XML attribute matches in
+    either order. ``val_span`` is the ``(start, end)`` of the value within
+    *line*, used by the scanner's per-line span dedup (L2)."""
     seen = set()
     for pattern in (_XML_KEY_FIRST, _XML_VAL_FIRST):
         for m in pattern.finditer(line):
             key, val = m.group('xml_key'), m.group('xml_val')
             if (key, val) not in seen:
                 seen.add((key, val))
-                yield key, val
+                yield key, val, m.span('xml_val')
 
 
 # Keep for backward compat in tests

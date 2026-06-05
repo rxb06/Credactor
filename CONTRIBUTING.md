@@ -37,7 +37,7 @@ The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contain
 
 Every PR runs:
 
-- **test** - pytest across Python 3.10–3.13
+- **test** - pytest across Python 3.11–3.13
 - **self-scan** - Credactor scans its own codebase (SARIF uploaded to Code Scanning)
 - **build-audit** - builds the wheel and verifies contents match the repo
 

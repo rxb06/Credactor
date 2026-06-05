@@ -6,6 +6,7 @@ Addresses: #3 (inline suppression), #4 (allowlist file)
 
 import fnmatch
 import os
+import re
 from pathlib import Path
 
 from ._log import logger
@@ -65,10 +66,16 @@ class AllowList:
                             continue
                     # glob-like or plain path
                     if any(c in line for c in ('*', '?', '/', os.sep, '.')):
-                        if line in ('*', '**', '**/*', '*.*'):
+                        # L6b: fnmatch has no globstar, so ** behaves like * and
+                        # patterns like */* and **/*.* match very broadly yet
+                        # evaded the narrow list. Flag a catch-all: an explicit
+                        # broad pattern, OR one with no literal filename segment
+                        # left after stripping glob metachars and separators.
+                        if (line in ('*', '**', '**/*', '*.*', '*/*', '**/*.*')
+                                or not re.sub(r'[*?/\\.]', '', line)):
                             logger.warning(
                                 '.credactorignore contains overly broad pattern "%s" '
-                                '— this suppresses ALL files.', line,
+                                '— this can suppress most or all files.', line,
                             )
                         elif any(
                             (line.endswith(ext) and line.lstrip('*').lstrip('/').startswith('*'))
@@ -128,9 +135,23 @@ class AllowList:
         """Return True if the value literal is in the allowlist."""
         return value in self._value_literals
 
+    def suppression_reason(self, filepath: str, lineno: int, value: str) -> str | None:
+        """Return which suppression matched — ``'glob'`` / ``'file:line'`` /
+        ``'value-literal'`` — or ``None`` (L11).
+
+        Same precedence as ``is_suppressed`` (glob, then file:line, then value)
+        so the boolean result is identical; callers use the kind to make the
+        ``--verbose`` audit trail say *why* a finding was suppressed.
+        """
+        rel = self._rel(filepath)
+        if any(fnmatch.fnmatch(rel, g) for g in self._file_globs):
+            return 'glob'
+        if lineno in self._file_line.get(rel, set()):
+            return 'file:line'
+        if value in self._value_literals:
+            return 'value-literal'
+        return None
+
     def is_suppressed(self, filepath: str, lineno: int, value: str) -> bool:
         """Combined check for any suppression."""
-        rel = self._rel(filepath)
-        return (any(fnmatch.fnmatch(rel, g) for g in self._file_globs)
-                or lineno in self._file_line.get(rel, set())
-                or value in self._value_literals)
+        return self.suppression_reason(filepath, lineno, value) is not None
