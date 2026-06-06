@@ -105,7 +105,8 @@ _ENV_VAR_NAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
 def _is_safe_value(val: str, extra_safe: set[str] | None = None,
-                   *, skip_dotted_access: bool = False) -> bool:
+                   *, skip_dotted_access: bool = False,
+                   safe_values: set[str] | None = None) -> bool:
     """Return True if the value is clearly NOT a real hardcoded credential.
 
     ``skip_dotted_access`` (L1): when True, the dotted-property-access heuristic
@@ -113,11 +114,16 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None,
     ``_DOTTED_ACCESS_RE`` and would be wrongly treated as runtime access; the
     caller sets this only for values already matched by the deterministic JWT
     regex, so ordinary dotted access (``self.config.password``) is unaffected.
+
+    ``safe_values`` is the pre-merged ``SAFE_VALUES | extra_safe`` set; the hot
+    path passes it so the union isn't rebuilt per candidate (#34). When omitted
+    the union is computed from ``extra_safe`` (preserves the simple call API).
     """
     raw = val.strip()
     cleaned = raw.lower().strip('"\'')
 
-    safe = SAFE_VALUES | extra_safe if extra_safe else SAFE_VALUES
+    safe = safe_values if safe_values is not None else (
+        SAFE_VALUES | extra_safe if extra_safe else SAFE_VALUES)
     if cleaned in safe:
         return True
 
@@ -214,6 +220,53 @@ def _severity_for_variable(var_name: str) -> str:
     return 'medium'
 
 
+def _make_finding(
+    filepath: str, lineno: int, *,
+    type: str, severity: str, value: str, raw: str,
+) -> Finding:
+    """Build the shared 7-key Finding dict (preview computed once via utils)."""
+    return {
+        'file':          filepath,
+        'line':          lineno,
+        'type':          type,
+        'severity':      severity,
+        'full_value':    value,
+        'value_preview': preview(value),
+        'raw':           raw,
+    }
+
+
+def _evaluate_candidate(
+    val: str, *,
+    min_len: int, floor: float,
+    filepath: str, lineno: int,
+    allowlist: AllowList | None, config: Config | None,
+    skip_dotted_access: bool = False, allow_short: bool = False,
+    safe_values: set[str] | None = None,
+) -> str | None:
+    """Run the shared four-step acceptance gate and return *val* if it should be
+    reported, else ``None``.
+
+    Order (identical across all scan passes): safe-value heuristic -> minimum
+    length -> entropy floor -> allowlist. The ``floor > 0`` short-circuit is
+    load-bearing: VALUE_PATTERNS provider keys pass ``floor=0.0`` and must NOT
+    acquire an entropy gate. ``allow_short`` skips the length check (private-key
+    headers). ``safe_values`` is the pre-merged safe set (#34).
+    """
+    if _is_safe_value(val, safe_values=safe_values, skip_dotted_access=skip_dotted_access):
+        log_verbose(f'{filepath}:{lineno} suppressed by safe value heuristic')
+        return None
+    if len(val) < min_len and not allow_short:
+        return None
+    if floor > 0 and entropy(val) < floor:
+        return None
+    reason = allowlist.suppression_reason(filepath, lineno, val) if allowlist else None
+    if reason:
+        log_verbose(f'{filepath}:{lineno} suppressed by allowlist ({reason})')
+        return None
+    return val
+
+
 def scan_line(
     lineno: int,
     line: str,
@@ -241,6 +294,8 @@ def scan_line(
     ent_threshold = config.entropy_threshold if config else ENTROPY_THRESHOLD
     min_len = config.min_value_length if config else MIN_VALUE_LENGTH
     extra_safe = config.extra_safe_values if config else None
+    # Merge the safe-value set once per line instead of per candidate (#34).
+    safe_set = SAFE_VALUES | extra_safe if extra_safe else SAFE_VALUES
 
     is_comment = stripped.startswith('#') or stripped.startswith('//')
 
@@ -250,6 +305,8 @@ def scan_line(
     candidates: list[tuple[int, int, Finding]] = []
 
     # --- 1. High-value VALUE_PATTERNS scan ---
+    # #35: _HASH_CONTEXT_RE is line-invariant — evaluate it at most once, lazily.
+    hash_context: bool | None = None
     for pattern, label, min_ent, severity in VALUE_PATTERNS:
         # M3: on comment lines, scan only the deterministic provider prefixes
         # (critical severity — AWS/GCP/Stripe-live/GitHub/.../PEM, near-zero
@@ -269,64 +326,47 @@ def scan_line(
                 if start == 0 or line[start - 1] not in ('"', "'"):
                     continue
 
-            # hex/high-entropy: skip if line contains hash/digest variable
-            is_hex_like = label in ('hex credential', 'high-entropy string')
-            if is_hex_like and _HASH_CONTEXT_RE.search(line):
-                log_verbose(f'{filepath}:{lineno} suppressed by hash context')
+            # hex/high-entropy: skip if line contains a hash/digest variable
+            if label in ('hex credential', 'high-entropy string'):
+                if hash_context is None:
+                    hash_context = bool(_HASH_CONTEXT_RE.search(line))
+                if hash_context:
+                    log_verbose(f'{filepath}:{lineno} suppressed by hash context')
+                    continue
+
+            # L1: a compact JWT (3 segments <=40 chars) matches _DOTTED_ACCESS_RE
+            # inside _is_safe_value; bypass that one heuristic for JWT tokens only.
+            accepted = _evaluate_candidate(
+                val, min_len=min_len, floor=min_ent,
+                filepath=filepath, lineno=lineno,
+                allowlist=allowlist, config=config,
+                skip_dotted_access=(label == 'JWT token'),
+                allow_short=(label == 'private key header'),
+                safe_values=safe_set)
+            if accepted is None:
                 continue
 
-            # L1: a compact JWT (all 3 segments <=40 chars) matches
-            # _DOTTED_ACCESS_RE inside _is_safe_value and would be dropped; bypass
-            # that one heuristic for JWT-matched tokens only.
-            if _is_safe_value(val, extra_safe, skip_dotted_access=(label == 'JWT token')):
-                log_verbose(f'{filepath}:{lineno} suppressed by safe value heuristic')
-                continue
-            if len(val) < min_len and label != 'private key header':
-                continue
-            if min_ent > 0 and entropy(val) < min_ent:
-                continue
-
-            # Allowlist check (L11: record which kind matched)
-            reason = allowlist.suppression_reason(filepath, lineno, val) if allowlist else None
-            if reason:
-                log_verbose(f'{filepath}:{lineno} suppressed by allowlist ({reason})')
-                continue
-
-            candidates.append((match.start(), match.end(), {
-                'file':          filepath,
-                'line':          lineno,
-                'type':          f'pattern:{label}',
-                'severity':      severity,
-                'full_value':    val,
-                'value_preview': preview(val),
-                'raw':           line.rstrip(),
-            }))
+            candidates.append((match.start(), match.end(), _make_finding(
+                filepath, lineno, type=f'pattern:{label}',
+                severity=severity, value=val, raw=line.rstrip())))
 
     # --- 2. XML attribute check (#21) ---
     if not is_comment:
         for xml_key, xml_val, xml_span in xml_attr_finditer(line):
             if not CRED_VAR_PATTERNS.search(xml_key):
                 continue
-            if _is_safe_value(xml_val, extra_safe):
-                log_verbose(f'{filepath}:{lineno} suppressed by safe value heuristic')
+            # Gate on the stripped value (matches the prior length/entropy checks);
+            # the Finding still stores the full xml_val for redaction matching.
+            if _evaluate_candidate(
+                    xml_val.strip(), min_len=min_len, floor=ent_threshold,
+                    filepath=filepath, lineno=lineno,
+                    allowlist=allowlist, config=config,
+                    safe_values=safe_set) is None:
                 continue
-            if len(xml_val.strip()) < min_len:
-                continue
-            if entropy(xml_val.strip()) < ent_threshold:
-                continue
-            reason = allowlist.suppression_reason(filepath, lineno, xml_val) if allowlist else None
-            if reason:
-                log_verbose(f'{filepath}:{lineno} suppressed by allowlist ({reason})')
-                continue
-            candidates.append((xml_span[0], xml_span[1], {
-                'file':          filepath,
-                'line':          lineno,
-                'type':          f'xml-attr:{xml_key}',
-                'severity':      _severity_for_variable(xml_key),
-                'full_value':    xml_val,
-                'value_preview': preview(xml_val),
-                'raw':           line.rstrip(),
-            }))
+            candidates.append((xml_span[0], xml_span[1], _make_finding(
+                filepath, lineno, type=f'xml-attr:{xml_key}',
+                severity=_severity_for_variable(xml_key),
+                value=xml_val, raw=line.rstrip())))
 
     # --- 3. Assignment check ---
     # L2: pass 3 is skipped (not early-returned) under these conditions so passes
@@ -351,33 +391,22 @@ def scan_line(
             low_var = var.lower()
             if any(low_var.endswith(s) for s in _HASH_VAR_SUFFIXES):
                 continue
-            if _is_safe_value(val, extra_safe):
-                log_verbose(f'{filepath}:{lineno} suppressed by safe value heuristic')
-                continue
             val_stripped = val.strip()
-            if len(val_stripped) < min_len:
-                continue
             # H7: a password-family variable gets a lower entropy floor so memorable
             # weak passwords (e.g. "Summer2024!") are not silently dropped.
             floor = (min(ent_threshold, PASSWORD_ENTROPY_FLOOR)
                      if _is_password_family(var) else ent_threshold)
-            if entropy(val_stripped) < floor:
-                continue
-            reason = (allowlist.suppression_reason(filepath, lineno, val_stripped)
-                      if allowlist else None)
-            if reason:
-                log_verbose(f'{filepath}:{lineno} suppressed by allowlist ({reason})')
+            if _evaluate_candidate(
+                    val_stripped, min_len=min_len, floor=floor,
+                    filepath=filepath, lineno=lineno,
+                    allowlist=allowlist, config=config,
+                    safe_values=safe_set) is None:
                 continue
 
-            candidates.append((match.start(grp), match.end(grp), {
-                'file':          filepath,
-                'line':          lineno,
-                'type':          f'variable:{var}',
-                'severity':      _severity_for_variable(var),
-                'full_value':    val_stripped,
-                'value_preview': preview(val_stripped),
-                'raw':           line.rstrip(),
-            }))
+            candidates.append((match.start(grp), match.end(grp), _make_finding(
+                filepath, lineno, type=f'variable:{var}',
+                severity=_severity_for_variable(var),
+                value=val_stripped, raw=line.rstrip())))
 
     return _dedup_findings(candidates)
 
@@ -463,15 +492,9 @@ def scan_file(
             if reason:
                 log_verbose(f'{filepath}:{lineno} suppressed by allowlist ({reason})')
                 continue
-            findings.append({
-                'file':          filepath,
-                'line':          lineno,
-                'type':          'pattern:private key block',
-                'severity':      'critical',
-                'full_value':    line.strip(),
-                'value_preview': preview(line.strip()),
-                'raw':           line.rstrip(),
-            })
+            findings.append(_make_finding(
+                filepath, lineno, type='pattern:private key block',
+                severity='critical', value=line.strip(), raw=line.rstrip()))
         elif in_pem_block and '-----END' in line and 'PRIVATE KEY' in line:
             in_pem_block = False
             pem_block_lines = 0
@@ -512,6 +535,7 @@ def _scan_multiline_strings(
     already_flagged = {f['line'] for f in existing_findings}
     min_len = config.min_value_length if config else MIN_VALUE_LENGTH
     extra_safe = config.extra_safe_values if config else None
+    safe_set = SAFE_VALUES | extra_safe if extra_safe else SAFE_VALUES
 
     # Find triple-quote blocks (Python) and template literal blocks (JS/TS)
     delimiters = [('"""', '"""'), ("'''", "'''"), ('`', '`')]
@@ -540,29 +564,17 @@ def _scan_multiline_strings(
             for pattern, label, min_ent, severity in VALUE_PATTERNS:
                 for match in pattern.finditer(block):
                     val = match.group(0)
-                    if _is_safe_value(val, extra_safe):
+                    if _evaluate_candidate(
+                            val, min_len=min_len, floor=min_ent,
+                            filepath=filepath, lineno=block_lineno,
+                            allowlist=allowlist, config=config,
+                            allow_short=(label == 'private key header'),
+                            safe_values=safe_set) is None:
                         continue
-                    if len(val) < min_len and label != 'private key header':
-                        continue
-                    if min_ent > 0 and entropy(val) < min_ent:
-                        continue
-                    # L11: multiline suppression was previously absent from the
-                    # --verbose audit trail — log which allowlist rule fired.
-                    reason = (allowlist.suppression_reason(filepath, block_lineno, val)
-                              if allowlist else None)
-                    if reason:
-                        log_verbose(f'{filepath}:{block_lineno} suppressed '
-                                            f'by allowlist ({reason})')
-                        continue
-                    existing_findings.append({
-                        'file':          filepath,
-                        'line':          block_lineno,
-                        'type':          f'multiline:{label}',
-                        'severity':      severity,
-                        'full_value':    val,
-                        'value_preview': preview(val),
-                        'raw':           block.replace('\n', '\\n')[:120],
-                    })
+                    existing_findings.append(_make_finding(
+                        filepath, block_lineno, type=f'multiline:{label}',
+                        severity=severity, value=val,
+                        raw=block.replace('\n', '\\n')[:120]))
                     break  # one finding per block is enough
 
             start = end_idx + len(close_delim)

@@ -499,3 +499,30 @@ class TestProviderEntropyFloor:
         # all 8 deterministic provider rows must fire at 0.0 entropy
         findings = scan_line(1, f'k = "{tok}"', 'a.py', config=config)
         assert findings, tok
+
+
+class TestEvaluateCandidate:
+    """P6/#10: the shared gate's `floor > 0` short-circuit is load-bearing —
+    provider keys (min_ent=0.0) must never acquire an entropy gate."""
+
+    def test_zero_floor_keeps_low_entropy_value(self):
+        from credactor.scanner import _evaluate_candidate
+        val = 'AKIA' + 'A' * 16  # format-valid, near-zero entropy
+        assert _evaluate_candidate(
+            val, min_len=8, floor=0.0, filepath='f.py', lineno=1,
+            allowlist=None, config=None) == val
+
+    def test_positive_floor_drops_low_entropy_value(self):
+        from credactor.scanner import _evaluate_candidate
+        assert _evaluate_candidate(
+            'a' * 16, min_len=8, floor=3.5, filepath='f.py', lineno=1,
+            allowlist=None, config=None) is None
+
+    def test_short_value_dropped_unless_allow_short(self):
+        from credactor.scanner import _evaluate_candidate
+        assert _evaluate_candidate(
+            'abcd', min_len=8, floor=0.0, filepath='f.py', lineno=1,
+            allowlist=None, config=None) is None
+        assert _evaluate_candidate(
+            'abcd', min_len=8, floor=0.0, filepath='f.py', lineno=1,
+            allowlist=None, config=None, allow_short=True) == 'abcd'
