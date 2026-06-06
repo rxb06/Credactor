@@ -6,7 +6,7 @@
 
 > **TL;DR:** Detect and redact hardcoded credentials before they hit version control. Regex + entropy + context-aware analysis, SARIF output, pre-commit hooks, parallel scanning, automated redaction.
 
-Credactor scans source code for hardcoded secrets — API keys, tokens, passwords, private keys, connection strings — and replaces them with language-aware environment variable references before they reach version control. It runs as a CLI tool, a pre-commit hook, or in CI pipelines. SARIF output plugs straight into GitHub Code Scanning.
+Credactor scans source code for hardcoded secrets — API keys, tokens, passwords, private keys, connection strings — and redacts them in place before they reach version control: by default with a safe sentinel (`REDACTED_BY_CREDACTOR`), or optionally with language-aware environment-variable references (`--replace-with env`). It runs as a CLI tool, a pre-commit hook, or in CI pipelines. SARIF output plugs straight into GitHub Code Scanning.
 
 <img width="1280" height="640" alt="credactor" src="https://github.com/user-attachments/assets/f1f94a9c-feea-4b8b-9ea4-81f25f07c4df" />
 
@@ -14,7 +14,7 @@ Credactor scans source code for hardcoded secrets — API keys, tokens, password
 
 ## Why Credactor?
 
-Most secret scanners stop at detection. Credactor redacts in place and replaces credentials with the right env var syntax for each language — `os.environ` in Python, `process.env` in JS, `System.getenv` in Java, and so on. It assigns severity levels so you can triage critical findings first instead of wading through noise.
+Most secret scanners stop at detection. Credactor **redacts in place** — by default replacing each secret with a loud sentinel (`REDACTED_BY_CREDACTOR`) that fails closed at runtime, or, with `--replace-with env`, the right env-var syntax for each language (`os.environ` in Python, `process.env` in JS, `System.getenv` in Java, and so on). It assigns severity levels so you can triage critical findings first instead of wading through noise.
 
 ## Install
 
@@ -58,7 +58,9 @@ credactor --ci .
 credactor --from-gitleaks gitleaks.json --dry-run .
 ```
 
-### Pre-commit Hook
+### Pre-commit Hook (beta)
+
+> Hook integration is in beta — run `credactor --dry-run .` manually before relying on it exclusively.
 
 ```yaml
 # .pre-commit-config.yaml
@@ -99,7 +101,7 @@ Standalone high-entropy hex/Base64 strings are only flagged when quoted; unquote
 - `.bak` backups before any file modification (fail-closed: redaction is skipped if a secure backup can't be written)
 - Inline `# credactor:ignore` suppression and `.credactorignore` allowlists (globs, `file:line`, value literals, and an explicit `value:` prefix)
 - Per-repo config via `.credactor.toml`
-- Parallel scanning (8 workers) for large repos
+- Parallel scanning (up to 8 worker threads; sequential for small file sets) for large repos
 - SARIF 2.1.0 output with column-level annotations for GitHub Code Scanning ([details](docs/user-guide.md#sarif))
 - **(BETA)** Ingest findings from external scanners — `--from-gitleaks FILE` / `--from-trufflehog FILE` — merged into the redaction pipeline and deduplicated against native findings (higher severity wins on overlap). Also configurable via an `[ingest]` table in `.credactor.toml`
 - `--fail-on-error` to catch files that couldn't be scanned
