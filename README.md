@@ -8,7 +8,7 @@
 
 Most scanners stop at detection, they hand you a list and leave the cleanup to you. Credactor finds the hardcoded secret **and rewrites it in place**, so remediation is one command instead of a manual chore.
 
-<img alt="Credactor — scan, redact, commit clean" src="docs/assets/credactor-banner.png" width="1280" height="320" />
+<img alt="Credactor — scan, redact, commit clean" src="https://raw.githubusercontent.com/rxb06/Credactor/main/docs/assets/credactor-banner.png" width="1280" height="320" />
 
 ```python
 # Credactor finds this…
@@ -109,7 +109,7 @@ credactor --from-gitleaks gitleaks.json --fix-all --yes .
 - Interactive or batch redaction; a custom replacement string via `--replacement`; `--scan-history` to scan git commit history
 - Secure backups: `--secure-delete` (overwrite and remove the `.bak`; raises the bar against casual recovery, not a forensic guarantee) or `--secure-backup-dir` to store backups outside the repo
 - Inline `# credactor:ignore` and `.credactorignore` allowlists (globs, `file:line`, value literals)
-- Per-repo config via `.credactor.toml`; parallel scanning (up to 8 threads) on large repos
+- Per-repo config via `.credactor.toml`; concurrent (I/O-bound) file scanning, up to 8 workers
 - 28 source/config file types out of the box; `--scan-json` to include JSON; `--fail-on-error` to fail when a file can't be read
 
 ## Scanned file types

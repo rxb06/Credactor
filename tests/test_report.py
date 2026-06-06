@@ -93,6 +93,12 @@ class TestJsonReport:
         assert result['findings'] == []
 
 
+def test_critical_and_high_have_distinct_colors():
+    # P1 quick win: CRITICAL and HIGH must not both render the same red.
+    from credactor.report import _SEVERITY_COLOR
+    assert _SEVERITY_COLOR['critical'] != _SEVERITY_COLOR['high']
+
+
 class TestSarifReport:
     def test_valid_sarif(self):
         findings = [{

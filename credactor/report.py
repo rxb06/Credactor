@@ -24,6 +24,7 @@ _COLORS = {
     'reset':    '\033[0m',
     'bold':     '\033[1m',
     'red':      '\033[91m',
+    'magenta':  '\033[95m',
     'yellow':   '\033[93m',
     'cyan':     '\033[96m',
     'green':    '\033[92m',
@@ -31,7 +32,7 @@ _COLORS = {
 }
 
 _SEVERITY_COLOR = {
-    'critical': 'red',
+    'critical': 'magenta',  # distinct from high so the top two severities differ
     'high':     'red',
     'medium':   'yellow',
     'low':      'cyan',

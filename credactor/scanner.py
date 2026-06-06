@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from ._log import logger
-from .config import Config
+from .config import ENTROPY_DEFAULT, MIN_LEN_DEFAULT, Config
 from .patterns import (
     _PEM_KEY_RE,
     ASSIGNMENT_RE,
@@ -28,9 +28,10 @@ from .suppressions import AllowList, has_inline_suppression
 from .types import SEVERITY_RANK, Finding
 from .utils import entropy, log_verbose, preview, read_lines
 
-# Global defaults (can be overridden by Config)
-ENTROPY_THRESHOLD = 3.5
-MIN_VALUE_LENGTH = 8
+# Global defaults (can be overridden by Config) — single-sourced from config so
+# the no-Config scan path can't drift from the dataclass defaults.
+ENTROPY_THRESHOLD = ENTROPY_DEFAULT
+MIN_VALUE_LENGTH = MIN_LEN_DEFAULT
 
 # Human-chosen password/secret variables hold memorable, lower-entropy values
 # that are still real credentials, so they get a lower entropy floor (H7).

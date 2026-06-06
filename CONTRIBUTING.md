@@ -45,7 +45,7 @@ All CI dependencies are hash-pinned via `requirements-ci.txt` (`--require-hashes
 
 ## Pull Request Process
 
-1. Branch from `main` (`feat/`, `fix/`, `security/`, `docs/`)
+1. Branch from `develop` (`feat/`, `fix/`, `security/`, `docs/`) — `develop` is the integration branch; `main` tracks releases
 2. Ensure all CI checks pass
 3. One logical change per PR
 4. Security fixes use `security/` prefix and reference SEC-XX identifiers

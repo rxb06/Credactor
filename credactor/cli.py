@@ -298,7 +298,7 @@ def _config_from_args(args: argparse.Namespace) -> Config:
         no_backup=args.no_backup,
         secure_backup_dir=args.secure_backup_dir,
         secure_delete=args.secure_delete,
-        no_color=args.no_color,
+        no_color=args.no_color or bool(os.environ.get('NO_COLOR')),
         fail_on_error=args.fail_on_error,
         verbose=args.verbose,
         replace_mode=args.replace_mode,

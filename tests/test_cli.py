@@ -555,6 +555,22 @@ class TestIngestErrorMessages:
                    and 'TruffleHog report' in m for m in msgs)
 
 
+class TestNoColorEnv:
+    """P1 quick win: honor the NO_COLOR convention (no-color.org)."""
+
+    def test_no_color_env_disables_color(self, monkeypatch):
+        monkeypatch.setenv('NO_COLOR', '1')
+        assert _config_from_args(build_parser().parse_args([])).no_color is True
+
+    def test_empty_no_color_does_not_disable(self, monkeypatch):
+        monkeypatch.setenv('NO_COLOR', '')  # convention: empty value = not set
+        assert _config_from_args(build_parser().parse_args([])).no_color is False
+
+    def test_absent_no_color_keeps_default(self, monkeypatch):
+        monkeypatch.delenv('NO_COLOR', raising=False)
+        assert _config_from_args(build_parser().parse_args([])).no_color is False
+
+
 class TestJsonSkippedNotice:
     """P1/#1B: a default scan must not imply 'clean' when .json files were held
     back (they are only scanned under --scan-json)."""
