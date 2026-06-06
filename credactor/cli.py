@@ -536,7 +536,7 @@ def _ingest_external(
                 name.lower(), name,
             )
         try:
-            ext = ingest_fn(report_path, target, config=config)
+            ext = ingest_fn(report_path, target)
             findings.extend(f for f in ext if not _suppressed(f))
         except ValueError as exc:
             _fatal('%s', exc)
@@ -546,7 +546,7 @@ def _ingest_external(
     if config.from_trufflehog:
         _ingest_one('TruffleHog', config.from_trufflehog, ingest_trufflehog)
 
-    return deduplicate_findings(findings, config=config)
+    return deduplicate_findings(findings)
 
 
 def _main_inner(argv: list[str] | None = None) -> None:

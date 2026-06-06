@@ -11,7 +11,6 @@ import urllib.parse
 from pathlib import Path
 
 from ._log import logger
-from .config import Config
 from .types import SEVERITY_RANK, Finding
 from .utils import is_within_root, preview, read_lines
 
@@ -57,7 +56,7 @@ _GITLEAKS_SEVERITY: dict[str, str] = {
 # Severity helpers
 # ---------------------------------------------------------------------------
 
-def _gitleaks_severity(rule_id: str, tags: list | None = None) -> str:
+def _gitleaks_severity(rule_id: str, tags: list[str] | None = None) -> str:
     """Map a Gitleaks RuleID (and optional Tags) to a Credactor severity string.
 
     Tags override: if any tag matches a severity level (case-insensitive),
@@ -167,16 +166,15 @@ def _resolve_external_finding_path(
 # Gitleaks parser
 # ---------------------------------------------------------------------------
 
-def ingest_gitleaks(
-    filepath: str,
-    target: str,
-    *,
-    config: Config | None = None,
-) -> list[Finding]:
-    """Parse a Gitleaks JSON report and return a list of Credactor finding dicts.
+def _load_report_preamble(
+    filepath: str, target: str, *, scanner_name: str,
+) -> tuple[str, str]:
+    """Resolve the report's target/filepath and run the size guards shared by both
+    external-report parsers. Returns ``(target_resolved, filepath_resolved)``.
 
-    Validates top-level is a list, caps at 10,000 findings, and checks
-    resolved paths are within the target directory.
+    The ``open()`` + decode step is intentionally NOT shared: Gitleaks uses
+    ``errors='strict'`` + ``json.load`` while TruffleHog uses ``errors='replace'``
+    + a per-line loop, and they diverge in how they use the handle.
     """
     target_path = Path(target).resolve()
     filepath_resolved = str(Path(filepath).resolve())
@@ -185,27 +183,41 @@ def ingest_gitleaks(
         # file. Using the file's parent prevents broken path joins like
         # <file>/src/config.py, but a warning is emitted so the caller knows.
         logger.warning(
-            'ingest_gitleaks: target %r is a file; '
+            '%s: target %r is a file; '
             'using its parent directory for path resolution.',
-            str(target_path),
+            scanner_name, str(target_path),
         )
         target_path = target_path.parent
     target_resolved = str(target_path)
 
-    # Reject oversized files before json.load() reads the whole array into
-    # memory — the 10,000-finding cap fires only after full deserialisation,
-    # so a gigantic file would OOM first.
+    # Reject oversized files before the parser reads them into memory — the
+    # 10,000-finding cap fires only after deserialisation, so a gigantic file
+    # would OOM first.
     try:
         report_size = os.path.getsize(filepath)
     except OSError as exc:
         raise ValueError(
-            f'Cannot open Gitleaks file {filepath!r}: {exc}'
+            f'Cannot open {scanner_name} file {filepath!r}: {exc}'
         ) from exc
     if report_size > _MAX_REPORT_BYTES:
         raise ValueError(
-            f'Gitleaks file {filepath!r} is {report_size:,} bytes; refusing to '
+            f'{scanner_name} file {filepath!r} is {report_size:,} bytes; refusing to '
             f'parse files over {_MAX_REPORT_BYTES:,} bytes the configured limit.'
         )
+    return target_resolved, filepath_resolved
+
+
+def ingest_gitleaks(
+    filepath: str,
+    target: str,
+) -> list[Finding]:
+    """Parse a Gitleaks JSON report and return a list of Credactor finding dicts.
+
+    Validates top-level is a list, caps at 10,000 findings, and checks
+    resolved paths are within the target directory.
+    """
+    target_resolved, filepath_resolved = _load_report_preamble(
+        filepath, target, scanner_name='Gitleaks')
 
     # Load JSON
     try:
@@ -353,39 +365,14 @@ def _trufflehog_severity(detector_name: str, verified: bool) -> str:
 def ingest_trufflehog(
     filepath: str,
     target: str,
-    *,
-    config: Config | None = None,
 ) -> list[Finding]:
     """Parse a TruffleHog NDJSON output file and return Credactor finding dicts.
 
     Validates each line as a JSON object, caps at 10,000 findings, and
     checks resolved paths are within the target directory.
     """
-    target_path = Path(target).resolve()
-    if target_path.is_file():
-        logger.warning(
-            'ingest_trufflehog: target %r is a file; '
-            'using its parent directory for path resolution.',
-            str(target_path),
-        )
-        target_path = target_path.parent
-    target_resolved = str(target_path)
-
-    filepath_resolved = str(Path(filepath).resolve())
-
-    # File-size guard: the per-line cap fires only after json.loads() succeeds,
-    # so a single multi-GB line would exhaust memory before the cap can apply.
-    try:
-        report_size = os.path.getsize(filepath)
-    except OSError as exc:
-        raise ValueError(
-            f'Cannot open TruffleHog file {filepath!r}: {exc}'
-        ) from exc
-    if report_size > _MAX_REPORT_BYTES:
-        raise ValueError(
-            f'TruffleHog file {filepath!r} is {report_size:,} bytes; refusing to '
-            f'parse files over {_MAX_REPORT_BYTES:,} bytes the configured limit.'
-        )
+    target_resolved, filepath_resolved = _load_report_preamble(
+        filepath, target, scanner_name='TruffleHog')
 
     try:
         # Closed via `with fh:` below; opened inside try only to convert OSError
@@ -563,10 +550,12 @@ def ingest_trufflehog(
 # Deduplication
 # ---------------------------------------------------------------------------
 
+# Dedup base key: (normalised_path, line, sha256_prefix_of_full_value).
+BaseKey = tuple[str, int, str]
+
+
 def deduplicate_findings(
     findings: list[Finding],
-    *,
-    config: Config | None = None,
 ) -> list[Finding]:
     """Remove duplicate findings, keeping the first (highest-fidelity) occurrence.
 
@@ -582,7 +571,7 @@ def deduplicate_findings(
     then trufflehog.  First occurrence wins, so priority is automatically
     Credactor > Gitleaks > TruffleHog.
     """
-    def _base(f: Finding) -> tuple:
+    def _base(f: Finding) -> BaseKey:
         path_norm = os.path.normpath(os.path.realpath(f.get('file', '')))
         line = f.get('line', 1)
         # Use surrogateescape so lone surrogate code points (which can arrive
@@ -596,14 +585,14 @@ def deduplicate_findings(
     # Pass 1: collect (path, line, value_hash) bases that have at least one
     # no-commit (working-tree) finding.  This lets us suppress committed
     # duplicates that arrive *before* the working-tree finding in the list.
-    no_commit_bases: set[tuple] = set()
+    no_commit_bases: set[BaseKey] = set()
     for f in findings:
         if not f.get('commit'):
             no_commit_bases.add(_base(f))
 
     # Pass 2: deduplicate in order; first occurrence wins.
     result: list[Finding] = []
-    seen: dict[tuple, int] = {}
+    seen: dict[tuple[str, int, str, str | None], int] = {}
 
     for f in findings:
         base = _base(f)

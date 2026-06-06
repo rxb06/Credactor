@@ -239,9 +239,7 @@ class TestGitleaksSymlinkAndPath:
         finding = _make_gitleaks_finding(File='src/config.py', StartLine=1)
         report = _write_report(tmp_path, [finding])
         # Pass the file itself as target — should resolve relative to its parent dir
-        from credactor.config import Config
-        cfg = Config(verbose=True)
-        results = ingest_gitleaks(str(report), str(config_py), config=cfg)
+        results = ingest_gitleaks(str(report), str(config_py))
         captured = capsys.readouterr()
         assert 'warn' in captured.err.lower()  # defensive warning emitted
         # Finding should still be resolved (parent of config_py = src/, not repo root)
