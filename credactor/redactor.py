@@ -14,12 +14,17 @@ from pathlib import Path
 from ._log import logger
 from .config import Config
 from .types import Finding
-from .utils import detect_encoding, group_by_file, relativize, sanitize_for_terminal
+from .utils import (
+    detect_encoding,
+    group_by_file,
+    mask_secret,
+    relativize,
+    sanitize_for_terminal,
+)
 
 _UNSAFE_REPLACEMENT_RE = re.compile(
     r'[`$\\;|&]|__import__|eval\s*\(|exec\s*\(|system\s*\(|subprocess'
 )
-
 
 
 # ---------------------------------------------------------------------------
@@ -312,111 +317,108 @@ def batch_replace_in_file(
         pass
 
     try:
-        with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
-            lines = fh.readlines()
-    except OSError as exc:
-        logger.error('Cannot read %s: %s', filepath, exc)
-        if lock_fh:
-            lock_fh.close()
-        return 0, len(file_findings)
-
-    # #1 — backup before modifying (immediately after read)
-    bak: str | None = None
-    if not config.no_backup:
-        bak = _create_backup(filepath, config)
-        if bak is None:
-            logger.error('Backup failed for %s — skipping replacements.', filepath)
-            if lock_fh:
-                lock_fh.close()
+        try:
+            with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
+                lines = fh.readlines()
+        except OSError as exc:
+            logger.error('Cannot read %s: %s', filepath, exc)
             return 0, len(file_findings)
 
-    replaced = 0
-    failed = 0
+        # #1 — backup before modifying (immediately after read)
+        bak: str | None = None
+        if not config.no_backup:
+            bak = _create_backup(filepath, config)
+            if bak is None:
+                logger.error('Backup failed for %s — skipping replacements.', filepath)
+                return 0, len(file_findings)
 
-    # Sort by line number descending so earlier replacements don't shift later ones
-    sorted_findings = sorted(file_findings, key=lambda f: f['line'], reverse=True)
+        replaced = 0
+        failed = 0
 
-    for finding in sorted_findings:
-        lineno = finding['line']
-        full_value = finding['full_value']
-        idx = lineno - 1
+        # Sort by line number descending so earlier replacements don't shift later ones
+        sorted_findings = sorted(file_findings, key=lambda f: f['line'], reverse=True)
 
-        if idx >= len(lines):
-            logger.warning('Line %d out of range in %s — skipping.', lineno, filepath)
-            failed += 1
-            continue
+        for finding in sorted_findings:
+            lineno = finding['line']
+            full_value = finding['full_value']
+            idx = lineno - 1
 
-        original = lines[idx]
-        if full_value not in original:
-            logger.warning(
-                'Value no longer found on line %d in %s (already replaced?).', lineno, filepath,
-            )
-            failed += 1
-            continue
-
-        replacement, takes_quotes = _make_replacement(finding, config, filepath)
-        if takes_quotes:
-            lines[idx] = _replace_quoted(original, full_value, replacement)
-        else:
-            lines[idx] = original.replace(full_value, replacement, 1)
-        replaced += 1
-
-    # H10: the per-finding replace handles one occurrence each. If the same
-    # secret value also appears uncredited elsewhere on the line (a trailing
-    # comment, or a second non-credential variable), those copies would survive.
-    # Sweep every touched line and replace any remaining exact copy of a redacted
-    # value with the sentinel, so no secret literal is ever left behind.
-    if replaced:
-        stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
-                 else config.custom_replacement)
-        values_by_line: dict[int, set[str]] = {}
-        for finding in file_findings:
-            values_by_line.setdefault(finding['line'] - 1, set()).add(finding['full_value'])
-        for idx, values in values_by_line.items():
             if idx >= len(lines):
+                logger.warning('Line %d out of range in %s — skipping.', lineno, filepath)
+                failed += 1
                 continue
-            for value in values:
-                if value in lines[idx]:
-                    # Replace only standalone copies (bounded by non-word
-                    # characters, e.g. a quoted literal) — never a substring of a
-                    # longer token like 123456789, which would corrupt unrelated
-                    # code. The replacement is a function so a custom replacement
-                    # string is inserted literally, not as a regex template.
-                    lines[idx] = re.sub(rf'(?<!\w){re.escape(value)}(?!\w)',
-                                        lambda _m: stray, lines[idx])
 
-    # Atomic write: write to temp file, then rename over original.
-    # Prevents corruption if process crashes mid-write.
-    dir_name = os.path.dirname(filepath) or '.'
-    tmp_path: str | None = None
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.credactor.tmp')
-        with os.fdopen(fd, 'w', encoding=encoding, errors='surrogateescape') as fh:
-            fh.writelines(lines)
-        os.replace(tmp_path, filepath)
-        tmp_path = None  # rename succeeded — nothing to clean up
-    except OSError as exc:
-        logger.error('Cannot write %s: %s', filepath, exc)
-        if lock_fh:
-            lock_fh.close()
-        return 0, len(file_findings)
-    finally:
-        if tmp_path is not None:
+            original = lines[idx]
+            if full_value not in original:
+                logger.warning(
+                    'Value no longer found on line %d in %s (already replaced?).', lineno, filepath,
+                )
+                failed += 1
+                continue
+
+            replacement, takes_quotes = _make_replacement(finding, config, filepath)
+            if takes_quotes:
+                lines[idx] = _replace_quoted(original, full_value, replacement)
+            else:
+                lines[idx] = original.replace(full_value, replacement, 1)
+            replaced += 1
+
+        # H10: the per-finding replace handles one occurrence each. If the same
+        # secret value also appears uncredited elsewhere on the line (a trailing
+        # comment, or a second non-credential variable), those copies would survive.
+        # Sweep every touched line and replace any remaining exact copy of a redacted
+        # value with the sentinel, so no secret literal is ever left behind.
+        if replaced:
+            stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
+                     else config.custom_replacement)
+            values_by_line: dict[int, set[str]] = {}
+            for finding in file_findings:
+                values_by_line.setdefault(finding['line'] - 1, set()).add(finding['full_value'])
+            for idx, values in values_by_line.items():
+                if idx >= len(lines):
+                    continue
+                # One compiled alternation per line (longest value first so a short
+                # value can't shadow a longer one). Word-boundary anchors keep us from
+                # corrupting a substring of a larger token like 123456789. The
+                # replacement is a function so a custom string with backreference-like
+                # text (e.g. '\1') is inserted literally, not as a regex template.
+                pat = re.compile(
+                    r'(?<!\w)(?:'
+                    + '|'.join(re.escape(v) for v in sorted(values, key=len, reverse=True))
+                    + r')(?!\w)'
+                )
+                lines[idx] = pat.sub(lambda _m: stray, lines[idx])
+
+        # Atomic write: write to temp file, then rename over original.
+        # Prevents corruption if process crashes mid-write.
+        dir_name = os.path.dirname(filepath) or '.'
+        tmp_path: str | None = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.credactor.tmp')
+            with os.fdopen(fd, 'w', encoding=encoding, errors='surrogateescape') as fh:
+                fh.writelines(lines)
+            os.replace(tmp_path, filepath)
+            tmp_path = None  # rename succeeded — nothing to clean up
+        except OSError as exc:
+            logger.error('Cannot write %s: %s', filepath, exc)
+            return 0, len(file_findings)
+        finally:
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
+
+        # Restore original file permissions
+        if orig_mode is not None:
             with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
+                os.chmod(filepath, orig_mode)
 
-    # Restore original file permissions
-    if orig_mode is not None:
-        with contextlib.suppress(OSError):
-            os.chmod(filepath, orig_mode)
+        if bak and config.secure_delete and replaced > 0:
+            _secure_delete(bak)
 
-    if bak and config.secure_delete and replaced > 0:
-        _secure_delete(bak)
-
-    if lock_fh:
-        lock_fh.close()
-
-    return replaced, failed
+        return replaced, failed
+    finally:
+        if lock_fh is not None:
+            lock_fh.close()
 
 
 def replace_single(
@@ -452,8 +454,6 @@ def interactive_review(
     replacement_desc = config.custom_replacement
     if config.replace_mode == 'env':
         replacement_desc = 'env var reference'
-
-    from .utils import mask_secret
 
     print(f'{"=" * 70}')
     print(f'  INTERACTIVE REDACTION  --  {total} credential(s) found')

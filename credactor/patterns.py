@@ -239,6 +239,10 @@ def xml_attr_finditer(line: str) -> Iterator[tuple[str, str, tuple[int, int]]]:
     """Yield ``(xml_key, xml_val, val_span)`` from XML attribute matches in
     either order. ``val_span`` is the ``(start, end)`` of the value within
     *line*, used by the scanner's per-line span dedup (L2)."""
+    # Hot-path guard: both patterns anchor on '<', so a line without it can never
+    # match — skip the two regex passes on the overwhelming majority of lines.
+    if '<' not in line:
+        return
     seen = set()
     for pattern in (_XML_KEY_FIRST, _XML_VAL_FIRST):
         for m in pattern.finditer(line):

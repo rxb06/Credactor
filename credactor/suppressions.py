@@ -35,6 +35,7 @@ class AllowList:
         self._file_line: dict[str, set[int]] = {}
         self._value_literals: set[str] = set()
         self._root = Path(root).resolve()
+        self._rel_cache: dict[str, str] = {}
         self._load()
 
     def _load(self) -> None:
@@ -120,10 +121,17 @@ class AllowList:
             )
 
     def _rel(self, filepath: str) -> str:
+        # resolve() does per-component lstat syscalls and is called once per
+        # candidate on a constant filepath across a whole file — memoize it.
+        cached = self._rel_cache.get(filepath)
+        if cached is not None:
+            return cached
         try:
-            return Path(filepath).resolve().relative_to(self._root).as_posix()
+            rel = Path(filepath).resolve().relative_to(self._root).as_posix()
         except ValueError:
-            return filepath
+            rel = filepath
+        self._rel_cache[filepath] = rel
+        return rel
 
     def is_file_suppressed(self, filepath: str) -> bool:
         """Return True if the entire file is suppressed by a glob pattern."""
