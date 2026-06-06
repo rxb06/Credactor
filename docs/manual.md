@@ -70,6 +70,9 @@ with `-f json` and read the `severity` field):
 | **medium** | Heuristic value matches and generic credential variables | quoted hex (32–64 chars), Stripe **test** key `sk_test_…`, `webhook_secret = …` |
 | **low** | Weak heuristics and ID-type variables | quoted Base64 (≥60 chars), `client_id` / `tenant_id` / `app_id` |
 
+In text output, severities are colour-coded — critical and high **red**, medium
+**yellow**, low **cyan** (`--no-color`, or a non-terminal stdout, disables this).
+
 ### Entropy model
 
 - **Deterministic matches have no entropy floor.** Provider prefixes and PEM
@@ -108,6 +111,20 @@ Exactly one *behaviour* applies per run; the precedence/forcing rules are in
 `Replace? [y/N]`. `y` redacts that finding (creating a `.bak`), `n`/Enter skips.
 Requires a TTY. Exit code = number of unresolved findings → 0 if all resolved/none,
 1 otherwise.
+
+Each finding is shown before its prompt (verified output):
+
+```text
+  [1/2]  config.py  --  line 1
+  Type     : pattern:Stripe live key
+  Severity : critical
+  Value    : sk_l[REDACTED]
+
+  Replace? [y/N]:
+```
+
+`y`/`yes` prints `-> Replaced.`; `n`/Enter prints `-- Skipped.`; Ctrl-C or EOF
+stops and reports how many files were already modified.
 
 ### `--dry-run`
 
@@ -281,7 +298,20 @@ journaling filesystems.
 
 Human-readable report; the credential is masked to its first 4 characters +
 `[REDACTED]`. `--no-color` strips ANSI codes (auto-disabled when stdout is not a
-terminal).
+terminal). Verified output:
+
+```text
+======================================================================
+  CREDENTIAL SCAN REPORT  --  2 finding(s) in 1 file(s)
+======================================================================
+
+  FILE: config.py
+  ────────────────────────────────────────────────────────────
+  Line    1  [CRITICAL]  [pattern:Stripe live key]
+           api_key = "sk_l[REDACTED]"
+  Line    2  [HIGH]  [variable:password]
+           password = "Tr0u[REDACTED]"
+```
 
 ### `--format json`
 
