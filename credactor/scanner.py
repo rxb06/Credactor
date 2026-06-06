@@ -90,12 +90,18 @@ _HASH_VAR_SUFFIXES = (
 # (e.g. minified JS, base64 blobs).  Real credentials never span 4 KiB.
 _MAX_LINE_LENGTH = 4096
 
+# Cap multiline block size to prevent ReDoS on huge triple-quoted strings.
+_MAX_BLOCK_SIZE = 8192
+
 # Line-level context check: if the line assigns to a hash/digest variable,
 # hex values on that line are likely hash outputs, not raw credentials
 _HASH_CONTEXT_RE = re.compile(
     r'(?:_hash|_hashed|_digest|_checksum|_fingerprint|_hmac|sha\d+|md5)\s*[:=]',
     re.IGNORECASE,
 )
+
+# POSIX env var name — used by the bare $VAR safe-value check.
+_ENV_VAR_NAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
 def _is_safe_value(val: str, extra_safe: set[str] | None = None,
@@ -131,7 +137,7 @@ def _is_safe_value(val: str, extra_safe: set[str] | None = None,
         # remain safe while pure non-identifier strings ($+foo, $/path,
         # $123abc) are correctly rejected.
         env_name = cleaned[1:]
-        if env_name and re.match(r'[A-Za-z_][A-Za-z0-9_]*', env_name):
+        if env_name and _ENV_VAR_NAME_RE.match(env_name):
             return True
     if cleaned.startswith('{%') and '%}' in cleaned:
         return True
@@ -199,7 +205,7 @@ def _is_password_family(var_name: str) -> bool:
 def _severity_for_variable(var_name: str) -> str:
     """Assign severity based on the variable name pattern."""
     low = var_name.lower()
-    if any(kw in low for kw in _PASSWORD_VAR_KEYWORDS):
+    if _is_password_family(var_name):
         return 'high'
     if any(kw in low for kw in ('token', 'api_key', 'apikey', 'access_key')):
         return 'high'
@@ -511,9 +517,6 @@ def _scan_multiline_strings(
     delimiters = [('"""', '"""'), ("'''", "'''"), ('`', '`')]
 
     full_text = ''.join(lines)
-
-    # Cap multiline block size to prevent ReDoS on huge triple-quoted strings
-    _MAX_BLOCK_SIZE = 8192
 
     for open_delim, close_delim in delimiters:
         start = 0

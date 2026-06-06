@@ -154,13 +154,16 @@ class AllowList:
         Same precedence as ``is_suppressed`` (glob, then file:line, then value)
         so the boolean result is identical; callers use the kind to make the
         ``--verbose`` audit trail say *why* a finding was suppressed.
+
+        Delegates to the three ``is_*`` predicates so the boolean result and the
+        reported reason can never drift (the shared ``_rel`` cache keeps the three
+        lookups cheap).
         """
-        rel = self._rel(filepath)
-        if any(fnmatch.fnmatch(rel, g) for g in self._file_globs):
+        if self.is_file_suppressed(filepath):
             return 'glob'
-        if lineno in self._file_line.get(rel, set()):
+        if self.is_line_suppressed(filepath, lineno):
             return 'file:line'
-        if value in self._value_literals:
+        if self.is_value_suppressed(value):
             return 'value-literal'
         return None
 
