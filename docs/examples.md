@@ -340,11 +340,11 @@ Merge findings from Gitleaks or TruffleHog into Credactor's redaction pipeline, 
 
 ```bash
 # Run Gitleaks, then redact everything it (and Credactor) found
-gitleaks detect --report-format json --report-path gitleaks.json .
+gitleaks dir . -f json -r gitleaks.json
 python -m credactor --from-gitleaks gitleaks.json --fix-all --yes .
 
 # TruffleHog NDJSON output, report-only gate
-trufflehog filesystem . --json > trufflehog.json
+trufflehog filesystem . --no-verification --json > trufflehog.json
 python -m credactor --from-trufflehog trufflehog.json --ci .
 ```
 

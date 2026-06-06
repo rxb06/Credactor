@@ -130,7 +130,7 @@ Run the external scanner first, then feed its report to Credactor as a CI gate:
 
 ```yaml
 - name: Gitleaks scan
-  run: gitleaks detect --report-format json --report-path gitleaks.json --no-git
+  run: gitleaks dir . -f json -r gitleaks.json
   continue-on-error: true
 
 - name: Credactor gate (native + Gitleaks)
@@ -141,7 +141,7 @@ TruffleHog emits newline-delimited JSON:
 
 ```yaml
 - name: TruffleHog scan
-  run: trufflehog filesystem . --json > trufflehog.json
+  run: trufflehog filesystem . --no-verification --json > trufflehog.json
   continue-on-error: true
 
 - name: Credactor gate (native + TruffleHog)
