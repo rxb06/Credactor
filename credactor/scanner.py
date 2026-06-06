@@ -371,12 +371,18 @@ def scan_line(
     # --- 3. Assignment check ---
     # L2: pass 3 is skipped (not early-returned) under these conditions so passes
     # 1/2 candidates still reach the dedup.
+    dynamic_lookup = DYNAMIC_LOOKUP_RE.search(line)
     run_assignment = not (
         (is_comment and '=' not in line and ':' not in line)
         or (is_comment and any(kw in stripped for kw in ('def ', 'async def ', 'class ')))
         or stripped.startswith(('def ', 'async def ', 'class '))
-        or DYNAMIC_LOOKUP_RE.search(line)
+        or dynamic_lookup
     )
+    # SEC-27: a runtime/dynamic lookup suppresses the assignment pass — surface it
+    # on the --verbose audit trail. (Restores visibility of the suppression; it does
+    # not change detection — a hardcoded default inside the lookup is still skipped.)
+    if dynamic_lookup and not run_assignment:
+        log_verbose(f'{filepath}:{lineno} assignment scan skipped — runtime/dynamic lookup')
 
     if run_assignment:
         for match in ASSIGNMENT_RE.finditer(line):

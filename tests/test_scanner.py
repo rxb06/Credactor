@@ -526,3 +526,16 @@ class TestEvaluateCandidate:
         assert _evaluate_candidate(
             'abcd', min_len=8, floor=0.0, filepath='f.py', lineno=1,
             allowlist=None, config=None, allow_short=True) == 'abcd'
+
+
+class TestDynamicLookupAuditTrail:
+    """SEC-27: a dynamic-lookup line suppresses the assignment pass — that
+    suppression must show on the --verbose audit trail (auditability, not
+    detection: the hardcoded default is still not scanned)."""
+
+    def test_dynamic_lookup_emits_skip_log(self, credactor_caplog):
+        # password = config.get("db_pass", "summer2024") — only the assignment
+        # pass would catch the weak default, and it is (correctly) suppressed.
+        scan_line(1, 'password = config.get("db_pass", "summer2024")', 'f.py')
+        assert any('runtime/dynamic lookup' in r.message
+                   for r in credactor_caplog.records)

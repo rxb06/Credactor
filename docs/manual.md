@@ -208,7 +208,9 @@ Apply to `--fix-all` and interactive redaction. Verified outputs for the line
   (`bad;rm -rf`, markup, newlines, control chars) is **rejected with exit 2**
   (verified). This guards against injection into rewritten files.
 - Env-mode output is syntactically valid: a redacted `.py`/`.js`/`.rb` still
-  compiles/parses (verified).
+  parses (verified). Note it emits an env **reference** (e.g. `os.environ["KEY"]`),
+  not the import it needs — add the matching import (e.g. `import os`) if the file
+  doesn't already have one, or it will raise `NameError` at runtime.
 
 ---
 

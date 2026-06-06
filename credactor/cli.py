@@ -489,6 +489,11 @@ def _collect_findings(
 
     if config.output_format == 'text':
         print_gitignore_skipped(gitignore_skipped, target, no_color=config.no_color)
+        # Avoid a false-clean impression: .json files are collected but only
+        # scanned under --scan-json, so flag that the type was held back.
+        if not config.scan_json and json_files:
+            print(f'  [note] {len(json_files)} .json file(s) present but not scanned — '
+                  f'pass --scan-json to include them.', file=sys.stderr)
 
     if config.scan_json and json_files:
         if (config.ci_mode or config.dry_run or config.fix_all

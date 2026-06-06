@@ -96,15 +96,33 @@ def test_permissions_preserved(tmp_path):
 
 
 def test_no_collateral_edits(tmp_path):
-    """#3 — bytes outside the secret line are unchanged."""
+    """#3 — bytes outside the secret line are unchanged.
+
+    Asserts on raw bytes (not .splitlines()) so it can catch line-ending
+    changes too — .splitlines() treats \\n and \\r\\n alike and is blind to them.
+    """
     s = _secret()
     content = f'# header comment\nbefore = 1\napi_key = "{s}"\nafter = 2\n'
     p, *_rest = _redact(tmp_path, 'app.py', content)
-    out = p.read_text(encoding='utf-8').splitlines()
-    assert out[0] == '# header comment'
-    assert out[1] == 'before = 1'
-    assert out[3] == 'after = 2'
-    assert s not in out[2]
+    raw = p.read_bytes()
+    assert b'# header comment\nbefore = 1\n' in raw
+    assert b'\nafter = 2\n' in raw
+    assert s.encode() not in raw
+
+
+def test_preserves_crlf_line_endings(tmp_path):
+    """CRLF files must keep CRLF — redaction must not normalize line endings."""
+    s = _secret()
+    content = f'# header\r\nbefore = 1\r\napi_key = "{s}"\r\nafter = 2\r\n'
+    p = tmp_path / 'app.py'
+    p.write_text(content, encoding='utf-8', newline='')  # write CRLF verbatim
+    cfg = Config(no_color=True)
+    batch_replace_in_file(str(p), scan_file(str(p), config=cfg), cfg)
+    raw = p.read_bytes()
+    assert b'# header\r\nbefore = 1\r\n' in raw   # CRLF preserved on untouched lines
+    assert b'\r\nafter = 2\r\n' in raw
+    assert raw.count(b'\n') == raw.count(b'\r\n')  # every LF is part of a CRLF (not normalized)
+    assert s.encode() not in raw
 
 
 def test_idempotent(tmp_path):

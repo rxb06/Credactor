@@ -553,3 +553,16 @@ class TestIngestErrorMessages:
         msgs = [r.getMessage() for r in credactor_caplog.records]
         assert any('--from-trufflehog requires a directory target' in m
                    and 'TruffleHog report' in m for m in msgs)
+
+
+class TestJsonSkippedNotice:
+    """P1/#1B: a default scan must not imply 'clean' when .json files were held
+    back (they are only scanned under --scan-json)."""
+
+    def test_notice_when_json_present_and_not_scanned(self, tmp_dir, capsys):
+        with open(os.path.join(tmp_dir, 'data.json'), 'w') as f:
+            f.write('{"k": "v"}\n')
+        with pytest.raises(SystemExit):
+            main(['--dry-run', tmp_dir])
+        err = capsys.readouterr().err
+        assert '.json file(s) present but not scanned' in err

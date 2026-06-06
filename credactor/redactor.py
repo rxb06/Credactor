@@ -318,7 +318,9 @@ def batch_replace_in_file(
 
     try:
         try:
-            with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
+            # newline='' preserves each line's original terminator (CRLF/LF) so
+            # redaction never normalizes line endings on untouched lines.
+            with open(filepath, encoding=encoding, errors='surrogateescape', newline='') as fh:
                 lines = fh.readlines()
         except OSError as exc:
             logger.error('Cannot read %s: %s', filepath, exc)
@@ -395,7 +397,7 @@ def batch_replace_in_file(
         tmp_path: str | None = None
         try:
             fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.credactor.tmp')
-            with os.fdopen(fd, 'w', encoding=encoding, errors='surrogateescape') as fh:
+            with os.fdopen(fd, 'w', encoding=encoding, errors='surrogateescape', newline='') as fh:
                 fh.writelines(lines)
             os.replace(tmp_path, filepath)
             tmp_path = None  # rename succeeded — nothing to clean up
