@@ -562,7 +562,6 @@ def _main_inner(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     config = _config_from_args(args)
     _configure_log(verbose=config.verbose, no_color=config.no_color)
-    _validate_invocation(config)
 
     target = config.target
     target_resolved_path = _validate_target(target)
@@ -570,6 +569,11 @@ def _main_inner(argv: list[str] | None = None) -> None:
     file_data = load_config_file(target, config.config_path, ci_mode=config.ci_mode)
     if file_data:
         apply_config_file(config, file_data)
+
+    # Validate invocation flags AFTER the config file is applied so a
+    # .credactor.toml [ingest] table can't slip past the --scan-history/ingest
+    # rejection (mirrors the post-config _validate_replacement / H5 check below).
+    _validate_invocation(config)
 
     # M10: an explicit --replacement overrides a config-file 'replacement'
     # (precedence CLI > config > default). argparse default is None, so a

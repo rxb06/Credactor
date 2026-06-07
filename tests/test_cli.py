@@ -211,6 +211,23 @@ class TestConfigFileIngestCLI:
             main(['--dry-run', repo])
         assert exc_info.value.code == 1
 
+    def test_config_file_ingest_with_scan_history_rejected(self, tmp_dir, credactor_caplog):
+        """A config-file [ingest] table must not slip past the --scan-history
+        rejection. The check runs after the config file is applied, so a
+        config-sourced ingest path exits 2 just like the CLI flag does (Codex P2)."""
+        repo, _ = self._setup_project(tmp_dir)
+        report = os.path.join(tmp_dir, 'report.json')
+        with open(report, 'w') as f:
+            json.dump([], f)
+        with open(os.path.join(repo, '.credactor.toml'), 'w') as f:
+            f.write('[ingest]\n')
+            f.write(f'from_gitleaks = "{report}"\n')
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--scan-history', repo])
+        assert exc_info.value.code == 2
+        msgs = [r.getMessage() for r in credactor_caplog.records]
+        assert any('--scan-history cannot be combined with' in m for m in msgs)
+
 
 class TestGitleaksAllowlistIntegration:
     """Allowlist suppression must apply to --from-gitleaks findings."""
