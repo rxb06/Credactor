@@ -46,3 +46,6 @@ mydocs/
 
 # Claude Code
 .claude/
+
+# Graphify
+graphify-out/

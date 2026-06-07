@@ -11,30 +11,39 @@ import re
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Optional
 
+from ._log import logger
 from .config import Config
-from .gitignore import load_gitignore_patterns, matches_gitignore
+from .gitignore import matches_gitignore, parse_gitignore_file
 from .patterns import SKIP_DIRS, SKIP_FILES
-from .scanner import scan_file, should_scan_file
+from .scanner import scan_file, scan_line, should_scan_file
 from .suppressions import AllowList
+from .types import Finding
+from .utils import is_within_root, log_verbose, relativize, sanitize_for_terminal
+
+# Subprocess timeouts (seconds). Staged/rev-parse use a short bound; the
+# history `git log -p` walk needs a longer one — intentionally distinct.
+_GIT_TIMEOUT_S = 30
+_GIT_LOG_TIMEOUT_S = 120
+# Thread-pool sizing for the parallel file scan (#27): cap workers to avoid fd
+# exhaustion, and scan small batches sequentially.
+_MAX_SCAN_WORKERS = 8
+_SEQUENTIAL_BATCH_THRESHOLD = 4
 
 
-def _is_within_root(path_str: str, root_str: str) -> bool:
-    """SEC-33: Cross-platform path containment check.
+class GitUnavailableError(RuntimeError):
+    """Git itself is unavailable or the target is not a git repository, for a
+    ``--staged`` / ``--scan-history`` scan (L4).
 
-    On Windows, git returns forward-slash paths but Path.resolve() returns
-    backslash paths.  Normalise both sides so the startswith() boundary
-    check works regardless of separator style.
-
-    Appends os.sep AFTER normpath to prevent prefix collision
-    (e.g. /tmp/repo must not match /tmp/repo_evil).
+    The discriminator is ``git rev-parse --show-toplevel``: if that fails the
+    directory isn't a usable repo, so the CLI turns this into a hard exit 2
+    rather than a false-clean exit 0. A later ``git log`` / ``git diff`` failure
+    *inside* a confirmed repo (e.g. a valid repo with zero commits) is NOT this
+    error — it stays a non-fatal empty result.
     """
-    norm_path = os.path.normpath(path_str)
-    norm_root = os.path.normpath(root_str)
-    return norm_path == norm_root or norm_path.startswith(norm_root + os.sep)
 
 
 def _progress_callback_factory(total: int, no_color: bool) -> Callable[[int], None]:
@@ -51,14 +60,15 @@ def _progress_callback_factory(total: int, no_color: bool) -> Callable[[int], No
 
 def walk_and_scan(
     root: str,
+    *,
     config: Config,
-    allowlist: Optional[AllowList] = None,
-) -> tuple[list[dict], list[str], list[str], list[str]]:
+    allowlist: AllowList | None = None,
+) -> tuple[list[Finding], list[str], list[str], list[str]]:
     """Single-pass directory walk
     Returns (findings, gitignore_skipped, json_files_available, errored_files).
     """
     root_path = Path(root).resolve()
-    gi_patterns = load_gitignore_patterns(root)
+    gi_patterns: list[tuple[str, Path]] = []
 
     scannable: list[str] = []
     json_files: list[str] = []
@@ -71,24 +81,30 @@ def walk_and_scan(
     # Additionally filter out symlinks that escape the scan root to
     # prevent traversal into parent or unrelated directories.
     # Append separator so '/tmp/repo' won't prefix-match '/tmp/repo_evil'.
+    # Gitignore patterns are accumulated during the same walk pass —
+    # os.walk is top-down by default, so a .gitignore at dir D is parsed
+    # before any of D's subtree files are checked.
     root_str = str(root_path) + os.sep
     for dirpath, dirnames, filenames in os.walk(root_path):
         dirnames[:] = [
             d for d in dirnames
             if d not in extra_skip_dirs
-            and _is_within_root(str(Path(os.path.join(dirpath, d)).resolve()), root_str)
+            and is_within_root(str(Path(os.path.join(dirpath, d)).resolve()), root_str)
         ]
+        if '.gitignore' in filenames:
+            gi_patterns.extend(parse_gitignore_file(
+                os.path.join(dirpath, '.gitignore'),
+                Path(dirpath).resolve(),
+            ))
         for filename in filenames:
             if filename in extra_skip_files:
                 continue
             full_path = os.path.join(dirpath, filename)
 
-            # SEC-23: Skip file symlinks that resolve outside the scan root.
-            # Prevents reading/modifying external files via planted symlinks.
             if os.path.islink(full_path):
                 try:
                     resolved_file = str(Path(full_path).resolve())
-                    if not _is_within_root(resolved_file, root_str):
+                    if not is_within_root(resolved_file, root_str):
                         continue
                 except OSError:
                     continue
@@ -100,9 +116,7 @@ def walk_and_scan(
 
             # Allowlist file-level suppression
             if allowlist and allowlist.is_file_suppressed(full_path):
-                if config and config.verbose:
-                    print(f'  [SKIP] {full_path} suppressed by allowlist (file-level)',
-                          file=sys.stderr)
+                log_verbose(f'{full_path} suppressed by allowlist (file-level)')
                 continue
 
             p = Path(filename)
@@ -124,13 +138,13 @@ def walk_and_scan(
 def _parallel_scan(
     files: list[str],
     config: Config,
-    allowlist: Optional[AllowList],
-) -> tuple[list[dict], list[str]]:
+    allowlist: AllowList | None,
+) -> tuple[list[Finding], list[str]]:
     """Scan files using a thread pool (#27).
 
     Returns (findings, errored_files).
     """
-    all_findings: list[dict] = []
+    all_findings: list[Finding] = []
     errored: list[str] = []
 
     if not files:
@@ -140,60 +154,61 @@ def _parallel_scan(
     done_count = 0
 
     # Use threads (I/O-bound); limit to 8 workers to avoid fd exhaustion
-    max_workers = min(8, len(files))
-    if max_workers <= 1 or len(files) <= 4:
+    max_workers = min(_MAX_SCAN_WORKERS, len(files))
+    if max_workers <= 1 or len(files) <= _SEQUENTIAL_BATCH_THRESHOLD:
         # Sequential for small batches
         for i, fp in enumerate(files, 1):
             try:
                 all_findings.extend(scan_file(fp, config=config, allowlist=allowlist))
             except Exception as exc:
                 errored.append(fp)
-                print(f'[WARN] Error scanning {fp}: {exc}',
-                      file=sys.stderr)
+                logger.warning('Error scanning %s: %s', fp, exc)
             progress(i)
         return all_findings, errored
 
     lock = threading.Lock()
-    emfile_hit = False
+    emfile_files: set[str] = set()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_file = {
             executor.submit(scan_file, fp, config=config, allowlist=allowlist): fp
             for fp in files
         }
         for future in as_completed(future_to_file):
+            fp = future_to_file[future]
+            try:
+                result = future.result()
+            except OSError as exc:
+                if exc.errno == errno.EMFILE:
+                    # Record EMFILE-only failures for a post-pool sequential retry;
+                    # warn once (not per fd-exhausted file).
+                    if not emfile_files:
+                        logger.warning(
+                            'Too many open files — remaining files will be scanned sequentially.',
+                        )
+                    emfile_files.add(fp)
+                else:
+                    errored.append(fp)
+                    logger.warning('Error scanning %s: %s', fp, exc)
+                result = []
+            except Exception as exc:
+                errored.append(fp)
+                logger.warning('Error scanning %s: %s', fp, exc)
+                result = []
             with lock:
                 done_count += 1
                 progress(done_count)
-                try:
-                    all_findings.extend(future.result())
-                except OSError as exc:
-                    fp = future_to_file[future]
-                    # SEC-05: Detect fd exhaustion and fall back
-                    if exc.errno == errno.EMFILE:
-                        emfile_hit = True
-                        errored.append(fp)
-                        print('[WARN] Too many open files — remaining '
-                              'files will be scanned sequentially.',
-                              file=sys.stderr)
-                    else:
-                        errored.append(fp)
-                        print(f'[WARN] Error scanning {fp}: {exc}',
-                              file=sys.stderr)
-                except Exception as exc:
-                    fp = future_to_file[future]
-                    errored.append(fp)
-                    print(f'[WARN] Error scanning {fp}: {exc}',
-                          file=sys.stderr)
+                all_findings.extend(result)
 
-    # SEC-05: Re-scan files that failed due to fd exhaustion sequentially
-    if emfile_hit:
-        for fp in list(errored):
+    # Sequential retry of ONLY the EMFILE-failed files (fds are now freed). A file
+    # that errored for any other reason stays in `errored` and is not re-scanned;
+    # an EMFILE file that fails again is appended to `errored` with a logged reason.
+    if emfile_files:
+        for fp in emfile_files:
             try:
-                results = scan_file(fp, config=config, allowlist=allowlist)
-                all_findings.extend(results)
-                errored.remove(fp)
-            except Exception:
-                pass  # already in errored list
+                all_findings.extend(scan_file(fp, config=config, allowlist=allowlist))
+            except Exception as exc:
+                errored.append(fp)
+                logger.warning('Error re-scanning %s: %s', fp, exc)
 
     return all_findings, errored
 
@@ -201,64 +216,123 @@ def _parallel_scan(
 # ---------------------------------------------------------------------------
 # #6 — Git staged-only scanning
 # ---------------------------------------------------------------------------
+def _is_safe_relpath(p: str) -> bool:
+    """True if *p* has no ``..`` path component. Uses a component check, not a
+    substring, so a filename like ``secret..py`` is not falsely rejected."""
+    return not any(part == '..' for part in Path(p).parts)
+
+
+def _require_git_repo(root: str, *, want_toplevel: bool = False) -> str:
+    """Probe that *root* is a usable git repo; raise GitUnavailableError if not.
+
+    ``want_toplevel`` selects the rev-parse subcommand: ``--show-toplevel`` (needs
+    a work tree — for --staged) vs ``--git-dir`` (also accepts bare/empty repos —
+    the canonical --scan-history target, so it isn't falsely rejected). Returns
+    rev-parse's stdout (the toplevel path when *want_toplevel*, else the git-dir,
+    which the caller may ignore)."""
+    sub = '--show-toplevel' if want_toplevel else '--git-dir'
+    try:
+        probe = subprocess.run(
+            ['git', 'rev-parse', sub],
+            capture_output=True, text=True, cwd=root, timeout=_GIT_TIMEOUT_S,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise GitUnavailableError(f'Cannot run git: {exc}') from exc
+    if probe.returncode != 0:
+        raise GitUnavailableError(
+            f'not a git repository (git rev-parse failed): {probe.stderr.strip()}')
+    return probe.stdout.strip()
+
+
 def scan_staged_files(
     root: str,
+    *,
     config: Config,
-    allowlist: Optional[AllowList] = None,
-) -> tuple[list[dict], list[str]]:
+    allowlist: AllowList | None = None,
+) -> tuple[list[Finding], list[str]]:
     """Scan only files staged in the git index (``git diff --cached``).
 
     Returns (findings, errored_files).
     """
-    # SEC-04: Resolve path before passing to subprocess
     root_path = Path(root).resolve()
+    # `git diff --cached` lists paths relative to the repo root, so resolve them
+    # against the toplevel, not the scan root (which may be a subdirectory).
+    # rev-parse is also the not-a-repo discriminator (L4): --staged needs a work
+    # tree, hence want_toplevel.
+    toplevel = Path(_require_git_repo(str(root_path), want_toplevel=True))
     try:
         result = subprocess.run(
-            ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACMR'],
-            capture_output=True, text=True, cwd=str(root_path), timeout=30,
+            ['git', 'diff', '--cached', '--name-only', '-z', '--diff-filter=ACMR'],
+            capture_output=True, text=True, cwd=str(root_path), timeout=_GIT_TIMEOUT_S,
         )
-        if result.returncode != 0:
-            print(f'[ERROR] git diff failed: {result.stderr.strip()}',
-                  file=sys.stderr)
-            return [], []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
+        # rev-parse already proved git is usable; a diff failure here is a
+        # non-fatal empty result, not a not-a-repo error.
+        logger.error('git diff failed: %s', exc)
         return [], []
-    raw_staged = result.stdout.strip().splitlines()
+    if result.returncode != 0:
+        logger.error('git diff failed: %s', result.stderr.strip())
+        return [], []
+    # -z yields NUL-separated, unquoted paths: a unicode/special-char filename
+    # would otherwise be octal-quoted and silently skipped (a staged-secret miss).
+    raw_staged = [p for p in result.stdout.split('\0') if p]
 
-    # SEC-31: Warn if suppression/config files are staged alongside code.
-    # A malicious contributor could add .credactor.toml with extra_safe_values
-    # or .credactorignore patterns to silently disable detection in the same PR.
+    # Warn if suppression/config files are staged alongside code — a malicious
+    # contributor could stage .credactor.toml or .credactorignore changes to
+    # silently disable detection in the same PR.
     _CONFIG_BASENAMES = {'.credactor.toml', '.credactorignore'}
     staged_configs = [f for f in raw_staged if Path(f).name in _CONFIG_BASENAMES]
     if staged_configs:
-        print('[WARN] Suppression/config files staged alongside code changes: '
-              f'{", ".join(staged_configs)}. '
-              'Review these for detection-bypass attempts.',
-              file=sys.stderr)
+        logger.warning(
+            'Suppression/config files staged alongside code changes: %s. '
+            'Review these for detection-bypass attempts.',
+            ', '.join(staged_configs),
+        )
 
-    staged = []
+    findings: list[Finding] = []
+    errored: list[str] = []
     for line in raw_staged:
-        # SEC-32: Reject paths with '..' path components (traversal guard,
-        # consistent with SEC-25).  Uses component check, not substring,
-        # so filenames like 'secret..py' are not falsely skipped.
-        if any(part == '..' for part in Path(line).parts):
+        # Reject paths with '..' components (traversal guard, consistent with the
+        # git-history scanner).
+        if not _is_safe_relpath(line):
             continue
-        full_path = str(root_path / line)
+        full_path = str(toplevel / line)
         try:
             resolved = str(Path(full_path).resolve())
         except OSError:
             continue
-        # SEC-33: Normalise path separators for cross-platform containment
-        if not _is_within_root(resolved, str(root_path) + os.sep):
+        if not is_within_root(resolved, str(root_path) + os.sep):
             continue
-        if os.path.isfile(full_path) and should_scan_file(line, config.extra_extensions):
-            staged.append(full_path)
+        if not should_scan_file(line, config.extra_extensions):
+            continue
 
-    if not staged:
-        return [], []
+        # Scan the STAGED index blob, not the working-tree file: the two can
+        # differ, and a pre-commit gate must see exactly what is being committed.
+        # Per-line scan mirrors scan_git_history; scan_file's multi-line passes
+        # (PEM blocks, and secrets spanning triple-quoted / template-literal
+        # strings) are NOT applied here. A PEM header line is still caught by
+        # scan_line, but a secret split across physical lines is not.
+        try:
+            blob = subprocess.run(
+                ['git', 'show', f':{line}'],
+                capture_output=True, cwd=str(root_path), timeout=_GIT_TIMEOUT_S,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logger.warning('Cannot read staged %s: %s', line, exc)
+            errored.append(full_path)
+            continue
+        if blob.returncode != 0:
+            logger.warning('Cannot read staged %s: %s', line,
+                           blob.stderr.decode('utf-8', 'replace').strip())
+            errored.append(full_path)
+            continue
 
-    return _parallel_scan(staged, config, allowlist)
+        content = blob.stdout.decode('utf-8', errors='surrogateescape')
+        for lineno, src in enumerate(content.splitlines(), start=1):
+            findings.extend(
+                scan_line(lineno, src, full_path, config=config, allowlist=allowlist))
+
+    return findings, errored
 
 
 # ---------------------------------------------------------------------------
@@ -266,33 +340,36 @@ def scan_staged_files(
 # ---------------------------------------------------------------------------
 def scan_git_history(
     root: str,
+    *,
     config: Config,
-    allowlist: Optional[AllowList] = None,
+    allowlist: AllowList | None = None,
     max_commits: int = 100,
-) -> list[dict]:
+) -> list[Finding]:
     """Scan ``git log -p`` output for credentials in committed history."""
-    # SEC-04: Resolve path before passing to subprocess
     root_path = Path(root).resolve()
+    # L4: probe with --git-dir (not --show-toplevel) so a bare/empty repo — a
+    # canonical --scan-history target — isn't falsely rejected. A valid repo with
+    # zero commits makes `git log` exit non-zero below, but rev-parse passes, so
+    # that stays a non-fatal empty result. See _require_git_repo.
+    _require_git_repo(str(root_path))
     try:
         result = subprocess.run(
             ['git', 'log', f'-{max_commits}', '-p', '--diff-filter=ACMR',
              '--no-color', '--format=commit %H'],
-            capture_output=True, text=True, cwd=str(root_path), timeout=120,
+            capture_output=True, text=True, cwd=str(root_path), timeout=_GIT_LOG_TIMEOUT_S,
         )
         if result.returncode != 0:
-            print(f'[ERROR] git log failed: {result.stderr.strip()}',
-                  file=sys.stderr)
+            # e.g. a valid repo with no commits yet — nothing to scan, not fatal.
+            logger.error('git log failed: %s', result.stderr.strip())
             return []
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f'[ERROR] Cannot run git: {exc}', file=sys.stderr)
+        logger.error('Cannot run git: %s', exc)
         return []
 
-    findings: list[dict] = []
+    findings: list[Finding] = []
     current_commit = ''
     current_file = ''
     diff_lineno = 0
-
-    from .scanner import scan_line
 
     for line in result.stdout.splitlines():
         if line.startswith('commit '):
@@ -300,21 +377,15 @@ def scan_git_history(
             continue
         if line.startswith('+++ b/'):
             current_file = line[6:]
-            # SEC-25: Reject paths with '..' path components from git output.
-            # Uses component check, not substring, so filenames like
-            # 'secret..py' are not falsely skipped.
-            if any(part == '..' for part in Path(current_file).parts):
+            # Reject '..' path components from git output (traversal guard).
+            if not _is_safe_relpath(current_file):
                 current_file = ''
             diff_lineno = 0
             continue
         if line.startswith('@@'):
             # Parse hunk header: @@ -old,count +new,count @@
-            # MED-01 fix: use regex instead of naive split on '+'
             hunk_match = re.search(r'\+(\d+)', line)
-            if hunk_match:
-                diff_lineno = int(hunk_match.group(1)) - 1
-            else:
-                diff_lineno = 0
+            diff_lineno = int(hunk_match.group(1)) - 1 if hunk_match else 0
             continue
         if line.startswith('+') and not line.startswith('+++'):
             diff_lineno += 1
@@ -334,6 +405,33 @@ def scan_git_history(
 # ---------------------------------------------------------------------------
 # JSON file selection (interactive, kept from original)
 # ---------------------------------------------------------------------------
+def _parse_selection(answer: str, n: int) -> list[int] | str:
+    """Parse a selection string ('1,3,5', '2-4', or a mix) into ordered,
+    de-duplicated 1-based indices in [1, n]. Returns an error message string on
+    invalid input. Pure (no I/O) so it is unit-testable on its own."""
+    selected: list[int] = []
+    for token in answer.replace(' ', '').split(','):
+        if '-' in token:
+            parts = token.split('-', 1)
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                lo, hi = int(parts[0]), int(parts[1])
+                if 1 <= lo <= hi <= n:
+                    selected.extend(range(lo, hi + 1))
+                else:
+                    return f'Range {token} out of bounds (1-{n}).'
+            else:
+                return f'Invalid range: {token}'
+        elif token.isdigit():
+            idx = int(token)
+            if 1 <= idx <= n:
+                selected.append(idx)
+            else:
+                return f'Number {token} out of bounds (1-{n}).'
+        else:
+            return f'Unrecognised token: {token!r}'
+    return list(dict.fromkeys(selected))
+
+
 def select_json_files(
     json_files: list[str],
     root: str,
@@ -342,16 +440,13 @@ def select_json_files(
     root_path = Path(root).resolve()
 
     if not json_files:
-        print('  [INFO] No .json files available to scan.\n')
+        print('  No .json files available to scan.\n')
         return []
 
     print(f'\n  Found {len(json_files)} .json file(s):\n')
     for i, path in enumerate(json_files, 1):
-        try:
-            rel = Path(path).relative_to(root_path)
-        except ValueError:
-            rel = Path(path)
-        print(f'    [{i:>3}]  {rel}')
+        rel = relativize(path, root_path)
+        print(f'    [{i:>3}]  {sanitize_for_terminal(rel)}')
 
     print()
     print('  Enter file numbers to scan (e.g. 1,3,5  or  2-4  or  all):')
@@ -370,38 +465,10 @@ def select_json_files(
         if answer == 'all':
             return json_files
 
-        selected: list[str] = []
-        valid = True
-        for token in answer.replace(' ', '').split(','):
-            if '-' in token:
-                parts = token.split('-', 1)
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    lo, hi = int(parts[0]), int(parts[1])
-                    if 1 <= lo <= hi <= len(json_files):
-                        selected.extend(json_files[lo - 1:hi])
-                    else:
-                        print(f'  [ERROR] Range {token} out of bounds (1-{len(json_files)}).')
-                        valid = False
-                        break
-                else:
-                    print(f'  [ERROR] Invalid range: {token}')
-                    valid = False
-                    break
-            elif token.isdigit():
-                idx = int(token)
-                if 1 <= idx <= len(json_files):
-                    selected.append(json_files[idx - 1])
-                else:
-                    print(f'  [ERROR] Number {token} out of bounds (1-{len(json_files)}).')
-                    valid = False
-                    break
-            else:
-                print(f'  [ERROR] Unrecognised token: {token!r}')
-                valid = False
-                break
-
-        if valid:
-            seen: set[str] = set()
-            unique = [p for p in selected if not (p in seen or seen.add(p))]  # type: ignore[func-returns-value]
-            print(f'  Selected {len(unique)} file(s) for .json scan.\n')
-            return unique
+        result = _parse_selection(answer, len(json_files))
+        if isinstance(result, str):
+            print(f'  {result}')
+            continue
+        selected = [json_files[i - 1] for i in result]
+        print(f'  Selected {len(selected)} file(s) for .json scan.\n')
+        return selected

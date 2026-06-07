@@ -3,7 +3,12 @@
 import io
 import json
 
-from credactor.report import json_report, print_report, sarif_report
+from credactor.report import (
+    json_report,
+    print_gitignore_skipped,
+    print_report,
+    sarif_report,
+)
 from credactor.utils import mask_secret
 
 # Construct test credential via concatenation to prevent self-redaction
@@ -45,6 +50,25 @@ class TestTextReport:
         # But the masked version should
         assert 'AKIA[REDACTED]' in output
 
+    def test_no_leak_when_value_not_verbatim_in_raw(self):
+        # An ingested finding whose stored value is NOT a verbatim substring of
+        # the raw line (e.g. TruffleHog URL-decoded value vs the encoded source)
+        # must not leak the on-disk secret: the substring mask no-ops, so the
+        # report must fail closed and show only the masked value, never raw.
+        on_disk = 'Sup3rS3cr3tP%40ss'
+        findings = [{
+            'file': '/tmp/config.py', 'line': 7,
+            'type': 'external:trufflehog:URI', 'severity': 'high',
+            'full_value': 'postgresql://admin:Sup3rS3cr3tP@ss@db:5432/x',  # decoded
+            'value_preview': '',
+            'raw': f'db_url = "postgresql://admin:{on_disk}@db:5432/x"',   # encoded
+        }]
+        buf = io.StringIO()
+        print_report(findings, '/tmp', no_color=True, stream=buf)
+        output = buf.getvalue()
+        assert on_disk not in output           # no unmasked secret
+        assert '[REDACTED]' in output          # masked value shown instead
+
 
 class TestJsonReport:
     def test_valid_json(self):
@@ -67,6 +91,12 @@ class TestJsonReport:
         result = json.loads(json_report([], '/tmp'))
         assert result['count'] == 0
         assert result['findings'] == []
+
+
+def test_critical_and_high_have_distinct_colors():
+    # P1 quick win: CRITICAL and HIGH must not both render the same red.
+    from credactor.report import _SEVERITY_COLOR
+    assert _SEVERITY_COLOR['critical'] != _SEVERITY_COLOR['high']
 
 
 class TestSarifReport:
@@ -107,6 +137,40 @@ class TestSarifReport:
         assert region['endLine'] == 5
         assert region['startColumn'] >= 1
         assert 'endColumn' in region
+
+    def test_sarif_omits_columns_when_value_absent(self):
+        # P8/#31: when full_value isn't on the raw line, omit column info rather
+        # than point at a wrong column.
+        findings = [{
+            'file': '/tmp/test.py',
+            'line': 3,
+            'type': 'variable:api_key',
+            'severity': 'high',
+            'full_value': _AWS_KEY,
+            'value_preview': _AWS_KEY,
+            'raw': 'api_key = os.environ["KEY"]',  # value not present in raw
+        }]
+        result = json.loads(sarif_report(findings, '/tmp'))
+        region = result['runs'][0]['results'][0]['locations'][0]['physicalLocation']['region']
+        assert region['startLine'] == 3
+        assert 'startColumn' not in region
+        assert 'endColumn' not in region
+
+
+class TestPrintGitignoreSkipped:
+    def test_writes_to_configurable_stream(self):
+        # P8/#60: a configurable stream like print_report.
+        buf = io.StringIO()
+        print_gitignore_skipped(['/tmp/a/secret.json'], '/tmp',
+                                no_color=True, stream=buf)
+        out = buf.getvalue()
+        assert 'not scanned' in out
+        assert 'a/secret.json' in out
+
+    def test_empty_is_noop(self):
+        buf = io.StringIO()
+        print_gitignore_skipped([], '/tmp', stream=buf)
+        assert buf.getvalue() == ''
 
     def test_sarif_rule_fields(self):
         """SARIF rules should include fullDescription and help."""

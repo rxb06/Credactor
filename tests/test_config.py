@@ -2,7 +2,35 @@
 
 import os
 
+import pytest
+
 from credactor.config import Config, apply_config_file, load_config_file
+
+
+class TestConfigPostInit:
+    def test_rejects_negative_entropy(self):
+        with pytest.raises(ValueError, match='entropy_threshold'):
+            Config(entropy_threshold=-1.0)
+
+    def test_rejects_excessive_entropy(self):
+        with pytest.raises(ValueError, match='entropy_threshold'):
+            Config(entropy_threshold=99.0)
+
+    def test_rejects_zero_min_value_length(self):
+        with pytest.raises(ValueError, match='min_value_length'):
+            Config(min_value_length=0)
+
+    def test_rejects_bad_replace_mode(self):
+        with pytest.raises(ValueError, match='replace_mode'):
+            Config(replace_mode='nonsense')
+
+    def test_rejects_bad_output_format(self):
+        with pytest.raises(ValueError, match='output_format'):
+            Config(output_format='xml')
+
+    def test_accepts_valid_extremes(self):
+        Config(entropy_threshold=0.0, min_value_length=1)
+        Config(entropy_threshold=6.0, min_value_length=200)
 
 
 class TestConfigDefaults:
@@ -57,6 +85,10 @@ class TestLoadConfigFile:
         assert result['min_value_length'] == 10
 
     def test_parent_dir_discovery(self, tmp_dir):
+        # A config at the project root (.git present) is discovered when scanning
+        # a subdirectory — the supported monorepo case (M14 keeps this working;
+        # only configs ABOVE the project root are refused).
+        os.makedirs(os.path.join(tmp_dir, '.git'))
         config_path = os.path.join(tmp_dir, '.credactor.toml')
         with open(config_path, 'w') as f:
             f.write('min_value_length = 15\n')
@@ -69,6 +101,16 @@ class TestLoadConfigFile:
         result = load_config_file(tmp_dir, '/nonexistent/.credactor.toml')
         assert result == {}
 
+    def test_load_config_ingest_section(self, tmp_dir):
+        config_path = os.path.join(tmp_dir, '.credactor.toml')
+        with open(config_path, 'w') as f:
+            f.write('[ingest]\n')
+            f.write('from_gitleaks = "/tmp/r.json"\n')
+        file_data = load_config_file(tmp_dir)
+        c = Config()
+        apply_config_file(c, file_data)
+        assert c.from_gitleaks == '/tmp/r.json'
+
 
 class TestApplyConfigFile:
     def test_apply_threshold(self):
@@ -80,6 +122,34 @@ class TestApplyConfigFile:
         c = Config()
         apply_config_file(c, {'min_value_length': 16})
         assert c.min_value_length == 16
+
+    def test_apply_entropy_invalid_type_uses_default(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'entropy_threshold': 'not-a-number'})
+        assert c.entropy_threshold == 3.5
+        assert any('entropy_threshold' in r.message and 'invalid type' in r.message
+                   for r in credactor_caplog.records)
+
+    def test_apply_entropy_out_of_range_uses_default(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'entropy_threshold': 99.0})
+        assert c.entropy_threshold == 3.5
+        assert any('entropy_threshold' in r.message and 'out of valid range' in r.message
+                   for r in credactor_caplog.records)
+
+    def test_apply_min_value_length_invalid_type_uses_default(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'min_value_length': 'not-a-number'})
+        assert c.min_value_length == 8
+        assert any('min_value_length' in r.message and 'invalid type' in r.message
+                   for r in credactor_caplog.records)
+
+    def test_apply_min_value_length_out_of_range_uses_default(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'min_value_length': 9999})
+        assert c.min_value_length == 8
+        assert any('min_value_length' in r.message and 'out of valid range' in r.message
+                   for r in credactor_caplog.records)
 
     def test_apply_skip_dirs(self):
         c = Config()
@@ -102,6 +172,64 @@ class TestApplyConfigFile:
         apply_config_file(c, {'extra_safe_values': ['TestToken123']})
         assert 'testtoken123' in c.extra_safe_values
 
+    # M8: a non-string element is skipped instead of crashing on .lower()
+    def test_extra_safe_values_non_string_element_skipped(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'extra_safe_values': [123, 'OK']})
+        assert c.extra_safe_values == {'ok'}
+        assert any('extra_safe_values' in r.message and 'not a string' in r.message
+                   for r in credactor_caplog.records)
+
+    # M9: a bare string is rejected whole, not char-split into single letters
+    def test_list_key_given_string_is_rejected(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'skip_dirs': 'vendor'})
+        assert c.skip_dirs == set()
+        assert any('skip_dirs' in r.message and 'list of strings' in r.message
+                   for r in credactor_caplog.records)
+
+    # M9: a non-iterable scalar is rejected instead of raising TypeError
+    def test_list_key_given_scalar_is_rejected(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'skip_dirs': 5})
+        assert c.skip_dirs == set()
+        assert any('skip_dirs' in r.message for r in credactor_caplog.records)
+
+    # M9 parity: a valid list still merges and keeps case (must NOT be lowercased)
+    def test_skip_dirs_case_preserved(self):
+        c = Config()
+        apply_config_file(c, {'skip_dirs': ['VendorDir']})
+        assert 'VendorDir' in c.skip_dirs
+
+    # M15: extra_extensions entries are lowercased to match the lowercased suffix
+    def test_extra_extensions_lowercased(self):
+        from credactor.scanner import should_scan_file
+        c = Config()
+        apply_config_file(c, {'extra_extensions': ['.TXT']})
+        assert should_scan_file('foo.txt', c.extra_extensions)
+
+    # M15 (leading dot): an un-dotted entry warns — it only matches files named
+    # exactly that, never files carrying that extension.
+    def test_extra_extensions_no_leading_dot_warns(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'extra_extensions': ['txt']})
+        assert any('extra_extensions' in r.message and 'leading dot' in r.message
+                   for r in credactor_caplog.records)
+
+    def test_extra_extensions_dotted_does_not_warn(self, credactor_caplog):
+        c = Config()
+        apply_config_file(c, {'extra_extensions': ['.txt']})
+        assert not any('leading dot' in r.message for r in credactor_caplog.records)
+
+    # M15 (leading dot): the un-dotted name-match is preserved, NOT auto-prepended
+    # — `dockerfile` still matches a file named Dockerfile but not *.dockerfile.
+    def test_extra_extensions_name_match_preserved(self):
+        from credactor.scanner import should_scan_file
+        c = Config()
+        apply_config_file(c, {'extra_extensions': ['dockerfile']})
+        assert should_scan_file('Dockerfile', c.extra_extensions)
+        assert not should_scan_file('foo.dockerfile', c.extra_extensions)
+
     def test_apply_replacement(self):
         c = Config()
         apply_config_file(c, {'replacement': 'REMOVED'})
@@ -117,3 +245,80 @@ class TestApplyConfigFile:
         apply_config_file(c, {'skip_dirs': ['new_dir']})
         assert 'existing' in c.skip_dirs
         assert 'new_dir' in c.skip_dirs
+
+    def test_apply_ingest_from_gitleaks(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_gitleaks': '/tmp/r.json'}})
+        assert c.from_gitleaks == '/tmp/r.json'
+
+    def test_apply_ingest_from_trufflehog(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_trufflehog': '/tmp/r.jsonl'}})
+        assert c.from_trufflehog == '/tmp/r.jsonl'
+
+    def test_apply_ingest_both_keys(self):
+        c = Config()
+        apply_config_file(
+            c, {'ingest': {'from_gitleaks': '/tmp/g.json', 'from_trufflehog': '/tmp/t.jsonl'}}
+        )
+        assert c.from_gitleaks == '/tmp/g.json'
+        assert c.from_trufflehog == '/tmp/t.jsonl'
+
+    def test_apply_ingest_non_string_warns(self, capsys):
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_gitleaks': 42}})
+        assert c.from_gitleaks is None
+        captured = capsys.readouterr()
+        assert '[WARN]' in captured.err
+
+    def test_apply_ingest_non_dict_warns(self, capsys):
+        c = Config()
+        apply_config_file(c, {'ingest': 'not-a-table'})
+        assert c.from_gitleaks is None
+        assert c.from_trufflehog is None
+        captured = capsys.readouterr()
+        assert '[WARN]' in captured.err
+
+    def test_apply_ingest_empty_section(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {}})
+        assert c.from_gitleaks is None
+        assert c.from_trufflehog is None
+
+    def test_apply_unknown_ingest_keys_ignored(self):
+        c = Config()
+        apply_config_file(c, {'ingest': {'unknown_key': 'x'}})
+        assert not hasattr(c, 'unknown_key')
+
+
+class TestReplacementValidation:
+    def test_non_string_replacement_ignored_with_warning(self, credactor_caplog):
+        # P8/#21: a non-str replacement now warns-and-ignores (keeps the default)
+        # instead of being coerced to its repr — matching the ingest-key discipline.
+        c = Config()
+        apply_config_file(c, {'replacement': 123})
+        assert c.custom_replacement == 'REDACTED_BY_CREDACTOR'
+        assert any('replacement must be a string' in r.message
+                   for r in credactor_caplog.records)
+
+    def test_string_replacement_applied(self):
+        c = Config()
+        apply_config_file(c, {'replacement': 'SCRUBBED'})
+        assert c.custom_replacement == 'SCRUBBED'
+
+
+def test_threshold_defaults_single_sourced():
+    # P8/#4: the field defaults and the _SCALAR_VALIDATORS defaults must come from
+    # the same constants (no triplication drift).
+    from credactor.config import (
+        _SCALAR_VALIDATORS,
+        ENTROPY_DEFAULT,
+        MIN_LEN_DEFAULT,
+    )
+    defaults = {key: default for key, _coerce, _bounds, default in _SCALAR_VALIDATORS}
+    assert Config().entropy_threshold == ENTROPY_DEFAULT == defaults['entropy_threshold']
+    assert Config().min_value_length == MIN_LEN_DEFAULT == defaults['min_value_length']
+    # scanner's no-Config fallbacks must single-source from config (panel quick win).
+    from credactor import scanner
+    assert scanner.ENTROPY_THRESHOLD == ENTROPY_DEFAULT
+    assert scanner.MIN_VALUE_LENGTH == MIN_LEN_DEFAULT

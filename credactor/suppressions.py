@@ -6,9 +6,10 @@ Addresses: #3 (inline suppression), #4 (allowlist file)
 
 import fnmatch
 import os
-import sys
+import re
 from pathlib import Path
 
+from ._log import logger
 from .patterns import SCAN_EXTENSIONS, SUPPRESS_RE
 
 
@@ -34,6 +35,7 @@ class AllowList:
         self._file_line: dict[str, set[int]] = {}
         self._value_literals: set[str] = set()
         self._root = Path(root).resolve()
+        self._rel_cache: dict[str, str] = {}
         self._load()
 
     def _load(self) -> None:
@@ -41,10 +43,19 @@ class AllowList:
         if not ignore_path.is_file():
             return
         try:
-            with open(ignore_path, encoding='utf-8', errors='replace') as fh:
+            with ignore_path.open(encoding='utf-8', errors='replace') as fh:
                 for raw_line in fh:
                     line = raw_line.strip()
                     if not line or line.startswith('#'):
+                        continue
+                    # M12: an explicit `value:<literal>` entry suppresses a value
+                    # containing . / ? * (base64, JWTs, connection strings) that
+                    # the char-based routing below would otherwise send to
+                    # glob/path matching, leaving it un-allowlistable.
+                    if line.startswith('value:'):
+                        literal = line[len('value:'):]
+                        if literal:
+                            self._value_literals.add(literal)
                         continue
                     # file:line entry
                     if ':' in line:
@@ -56,51 +67,106 @@ class AllowList:
                             continue
                     # glob-like or plain path
                     if any(c in line for c in ('*', '?', '/', os.sep, '.')):
-                        # SEC-13: Warn on overly broad patterns that suppress everything
-                        if line in ('*', '**', '**/*', '*.*'):
-                            print(f'[WARN] .credactorignore contains overly broad '
-                                  f'pattern "{line}" — this suppresses ALL files.',
-                                  file=sys.stderr)
-                        # SEC-13b: Warn on extension-targeting wildcards that cover
-                        # scannable file types (e.g. "**/*.py", "*.js")
+                        # L6b: fnmatch has no globstar, so ** behaves like * and
+                        # patterns like */* and **/*.* match very broadly yet
+                        # evaded the narrow list. Flag a catch-all: an explicit
+                        # broad pattern, OR one with no literal filename segment
+                        # left after stripping glob metachars and separators.
+                        if (line in ('*', '**', '**/*', '*.*', '*/*', '**/*.*')
+                                or not re.sub(r'[*?/\\.]', '', line)):
+                            logger.warning(
+                                '.credactorignore contains overly broad pattern "%s" '
+                                '— this can suppress most or all files.', line,
+                            )
                         elif any(
-                            line.endswith(ext) and line.lstrip('*').lstrip('/').startswith('*')
+                            (line.endswith(ext) and line.lstrip('*').lstrip('/').startswith('*'))
                             or line == f'*{ext}'
                             for ext in SCAN_EXTENSIONS
                         ):
-                            print(f'[WARN] .credactorignore pattern "{line}" may '
-                                  f'suppress many scannable files.',
-                                  file=sys.stderr)
+                            logger.warning(
+                                '.credactorignore pattern "%s" may suppress many scannable files.',
+                                line,
+                            )
                         self._file_globs.append(line)
                     else:
                         # treat as a value literal to suppress
                         self._value_literals.add(line)
-        except (OSError, PermissionError):
-            pass
+            if self._value_literals:
+                # Unlike file globs (warned only when overly broad), value
+                # literals had no signal at all — a contributor can hide their
+                # own secret everywhere with one line. Surface that they exist.
+                logger.warning(
+                    '.credactorignore defines %d value-literal suppression(s); '
+                    'these hide any matching value everywhere with no per-finding '
+                    'signal — review them for detection-bypass.',
+                    len(self._value_literals),
+                )
+            if self._file_line:
+                # M13: file:line entries are positional only — the value is never
+                # checked — so a new secret that drifts onto a suppressed line
+                # after edits is silently hidden. No format change; surface the
+                # drift risk so entries get re-verified.
+                logger.warning(
+                    '.credactorignore has %d positional file:line suppression(s); '
+                    'they match by line number only and will not catch a new '
+                    'secret that moves onto a suppressed line — re-check them '
+                    'after large edits.',
+                    sum(len(v) for v in self._file_line.values()),
+                )
+        except OSError as exc:
+            logger.warning(
+                '.credactorignore could not be fully read (%s); '
+                'the allowlist may be incomplete.',
+                exc,
+            )
 
-    def is_file_suppressed(self, filepath: str) -> bool:
-        """Return True if the entire file is suppressed by a glob pattern."""
+    def _rel(self, filepath: str) -> str:
+        # resolve() does per-component lstat syscalls and is called once per
+        # candidate on a constant filepath across a whole file — memoize it.
+        cached = self._rel_cache.get(filepath)
+        if cached is not None:
+            return cached
         try:
             rel = Path(filepath).resolve().relative_to(self._root).as_posix()
         except ValueError:
             rel = filepath
+        self._rel_cache[filepath] = rel
+        return rel
+
+    def is_file_suppressed(self, filepath: str) -> bool:
+        """Return True if the entire file is suppressed by a glob pattern."""
+        rel = self._rel(filepath)
         return any(fnmatch.fnmatch(rel, g) for g in self._file_globs)
 
     def is_line_suppressed(self, filepath: str, lineno: int) -> bool:
         """Return True if a specific file:line is suppressed."""
-        try:
-            rel = Path(filepath).resolve().relative_to(self._root).as_posix()
-        except ValueError:
-            rel = filepath
-        lines = self._file_line.get(rel, set())
-        return lineno in lines
+        rel = self._rel(filepath)
+        return lineno in self._file_line.get(rel, set())
 
     def is_value_suppressed(self, value: str) -> bool:
         """Return True if the value literal is in the allowlist."""
         return value in self._value_literals
 
+    def suppression_reason(self, filepath: str, lineno: int, value: str) -> str | None:
+        """Return which suppression matched — ``'glob'`` / ``'file:line'`` /
+        ``'value-literal'`` — or ``None`` (L11).
+
+        Same precedence as ``is_suppressed`` (glob, then file:line, then value)
+        so the boolean result is identical; callers use the kind to make the
+        ``--verbose`` audit trail say *why* a finding was suppressed.
+
+        Delegates to the three ``is_*`` predicates so the boolean result and the
+        reported reason can never drift (the shared ``_rel`` cache keeps the three
+        lookups cheap).
+        """
+        if self.is_file_suppressed(filepath):
+            return 'glob'
+        if self.is_line_suppressed(filepath, lineno):
+            return 'file:line'
+        if self.is_value_suppressed(value):
+            return 'value-literal'
+        return None
+
     def is_suppressed(self, filepath: str, lineno: int, value: str) -> bool:
         """Combined check for any suppression."""
-        return (self.is_file_suppressed(filepath)
-                or self.is_line_suppressed(filepath, lineno)
-                or self.is_value_suppressed(value))
+        return self.suppression_reason(filepath, lineno, value) is not None

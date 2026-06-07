@@ -23,4 +23,4 @@ jobs:
         run: pip install credactor
 
       - name: Scan for credentials
-        run: credactor .
+        run: credactor --ci .

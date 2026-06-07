@@ -4,11 +4,23 @@ Configuration loading from ``.credactor.toml`` files.
 
 from __future__ import annotations
 
-import os
-import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any
+
+from ._log import logger
+from .utils import is_within_root
+
+# Single source of truth for the two numeric thresholds — referenced by the
+# Config field defaults, __post_init__, and _SCALAR_VALIDATORS so they can't drift.
+ENTROPY_BOUNDS: tuple[float, float] = (0.0, 6.0)
+ENTROPY_DEFAULT: float = 3.5
+MIN_LEN_BOUNDS: tuple[int, int] = (1, 200)
+MIN_LEN_DEFAULT: int = 8
+
+# Parsed-TOML config shape.
+TomlData = dict[str, Any]
 
 
 @dataclass
@@ -16,19 +28,20 @@ class Config:
     """Runtime configuration — populated from CLI flags and/or config file."""
 
     # Thresholds
-    entropy_threshold: float = 3.5
-    min_value_length: int = 8
+    entropy_threshold: float = ENTROPY_DEFAULT
+    min_value_length: int = MIN_LEN_DEFAULT
 
     # Directories / files
-    skip_dirs: set[str] = field(default_factory=lambda: set())
-    skip_files: set[str] = field(default_factory=lambda: set())
-    extra_extensions: set[str] = field(default_factory=lambda: set())
-    extra_safe_values: set[str] = field(default_factory=lambda: set())
+    skip_dirs: set[str] = field(default_factory=set)
+    skip_files: set[str] = field(default_factory=set)
+    extra_extensions: set[str] = field(default_factory=set)
+    extra_safe_values: set[str] = field(default_factory=set)
 
     # Behaviour flags (populated by CLI)
     ci_mode: bool = False
     dry_run: bool = False
     fix_all: bool = False
+    assume_yes: bool = False  # L3: skip the --fix-all confirmation prompt
     staged_only: bool = False
     scan_history: bool = False
     scan_json: bool = False
@@ -42,11 +55,34 @@ class Config:
     custom_replacement: str = 'REDACTED_BY_CREDACTOR'
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'
     target: str = '.'
-    config_path: Optional[str] = None
+    config_path: str | None = None
+    from_gitleaks: str | None = None
+    from_trufflehog: str | None = None
+    backup_warn_shown: bool = False
+
+    def __post_init__(self) -> None:
+        lo_e, hi_e = ENTROPY_BOUNDS
+        if not lo_e <= self.entropy_threshold <= hi_e:
+            raise ValueError(
+                f'entropy_threshold must be in [{lo_e}, {hi_e}], '
+                f'got {self.entropy_threshold}')
+        lo_m, hi_m = MIN_LEN_BOUNDS
+        if not lo_m <= self.min_value_length <= hi_m:
+            raise ValueError(
+                f'min_value_length must be in [{lo_m}, {hi_m}], '
+                f'got {self.min_value_length}')
+        if self.replace_mode not in ('sentinel', 'env', 'custom'):
+            raise ValueError(
+                f'replace_mode must be sentinel|env|custom, '
+                f'got {self.replace_mode!r}')
+        if self.output_format not in ('text', 'json', 'sarif'):
+            raise ValueError(
+                f'output_format must be text|json|sarif, '
+                f'got {self.output_format!r}')
 
 
 def _find_project_root(start: Path) -> Path | None:
-    """SEC-02: Walk up from *start* looking for a ``.git`` directory.
+    """Walk up from *start* looking for a ``.git`` directory.
 
     Returns the directory containing ``.git``, or ``None`` if not found.
     """
@@ -62,9 +98,9 @@ def _find_project_root(start: Path) -> Path | None:
 
 def load_config_file(
     root: str,
-    explicit_path: Optional[str] = None,
+    explicit_path: str | None = None,
     ci_mode: bool = False,
-) -> dict:
+) -> TomlData:
     """Load a .credactor.toml config file and return the raw dict.
 
     Searches for .credactor.toml in root, then parent dirs up to /.
@@ -73,7 +109,7 @@ def load_config_file(
     if explicit_path:
         candidates = [Path(explicit_path)]
     else:
-        # HIGH-06: Limit traversal depth to prevent picking up config files
+        # Limit traversal depth to prevent picking up config files
         # from shared parent directories (e.g. /tmp/.credactor.toml).
         # Walk up at most 5 levels — enough for monorepo nesting.
         max_depth = 5
@@ -85,141 +121,156 @@ def load_config_file(
                 break
             p = p.parent
 
-    # SEC-02: Determine project root for trust boundary check
     project_root = _find_project_root(Path(root).resolve())
 
     for candidate in candidates:
         if candidate.is_file():
-            # SEC-02 / SEC-29 / SEC-33: Config trust boundary check
-            # Normpath for cross-platform separator normalisation, then
-            # append os.sep AFTER normpath to prevent prefix collision.
-            _cand = os.path.normpath(str(candidate.resolve()))
-            _scan = os.path.normpath(str(Path(root).resolve()))
+            _cand = str(candidate.resolve())
+            _scan = str(Path(root).resolve())
 
             if project_root:
-                _root = os.path.normpath(str(project_root))
-                outside = not (
-                    _cand == _root or _cand.startswith(_root + os.sep)
-                )
+                _root = str(project_root)
+                outside = not is_within_root(_cand, _root)
             else:
-                # SEC-39: No project root found (no .git). Fall back to
-                # checking against the scan root — warn if config is in
-                # a parent directory, since we cannot verify trust.
-                outside = not (
-                    _cand == _scan or _cand.startswith(_scan + os.sep)
-                )
+                outside = not is_within_root(_cand, _scan)
 
             if outside:
-                if ci_mode:
-                    # SEC-29: Hard block in CI — never trust external config
-                    print(
-                        f'[ERROR] Refusing to load config from outside project '
-                        f'root in CI mode: {candidate}',
-                        file=sys.stderr,
+                ref = project_root or root
+                if explicit_path and not ci_mode:
+                    # M14: an outside-root config is honoured only when the user
+                    # points --config at it explicitly (non-CI). Implicit
+                    # discovery of a config above the project root — or any
+                    # outside config in CI — is refused: it can silently weaken
+                    # detection or inject a replacement (couples with H5).
+                    logger.warning(
+                        'Loading config from outside project root via --config: '
+                        '%s (project root: %s)', candidate, ref,
+                    )
+                else:
+                    hint = '' if ci_mode else ' Pass --config to load it explicitly.'
+                    logger.error(
+                        'Refusing to load config from outside project root: '
+                        '%s (project root: %s).%s', candidate, ref, hint,
                     )
                     return {}
-                ref = project_root or root
-                print(
-                    f'[WARN] Config loaded from outside project root: '
-                    f'{candidate} (project root: {ref})',
-                    file=sys.stderr,
-                )
             return _parse_toml(candidate)
 
     return {}
 
 
-def _parse_toml(path: Path) -> dict:
-    """Parse a TOML file. Uses tomllib (3.11+) or tomli as fallback."""
+def _parse_toml(path: Path) -> TomlData:
+    """Parse a TOML file using stdlib tomllib (Python 3.11+)."""
+    import tomllib
     try:
-        if sys.version_info >= (3, 11):
-            import tomllib
-            with open(path, 'rb') as fh:
-                return tomllib.load(fh)
-        else:
-            try:
-                import tomli
-                with open(path, 'rb') as fh:
-                    return tomli.load(fh)
-            except ImportError:
-                # Fall back to very basic key=value parsing for simple configs
-                return _basic_toml_parse(path)
-    except (OSError, PermissionError) as exc:
-        # SEC-03: Surface config read failures instead of silently ignoring
-        print(f'[WARN] Could not read config {path}: {exc}', file=sys.stderr)
+        with open(path, 'rb') as fh:
+            return tomllib.load(fh)
+    except OSError as exc:
+        logger.warning('Could not read config %s: %s', path, exc)
+        return {}
+    except tomllib.TOMLDecodeError as exc:
+        logger.warning('Invalid TOML in %s: %s', path, exc)
         return {}
 
 
-def _basic_toml_parse(path: Path) -> dict:
-    """Minimal TOML-like parser for key = value pairs (no nested tables)."""
-    result: dict = {}
+# Scalar config keys validated uniformly: (key, coerce, (lo, hi), default).
+# An invalid type or out-of-range value logs a warning and falls back to the
+# default — identical behaviour to the per-field blocks this table replaced.
+_SCALAR_VALIDATORS = (
+    ('entropy_threshold', float, ENTROPY_BOUNDS, ENTROPY_DEFAULT),
+    ('min_value_length', int, MIN_LEN_BOUNDS, MIN_LEN_DEFAULT),
+)
+
+
+def _coerce_scalar(
+    key: str, raw: object, coerce: Callable[[Any], Any],
+    bounds: tuple[float, float], default: Any,
+) -> Any:
+    """Coerce *raw* via *coerce* and range-check it against *bounds*; warn and
+    return *default* on a type error or out-of-range value."""
+    lo, hi = bounds
     try:
-        with open(path, encoding='utf-8') as fh:
-            for line in fh:
-                stripped = line.strip()
-                if not stripped or stripped.startswith('#') or stripped.startswith('['):
-                    continue
-                if '=' not in stripped:
-                    continue
-                key, _, val = stripped.partition('=')
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                # Try to parse as list
-                if val.startswith('[') and val.endswith(']'):
-                    items = val[1:-1].split(',')
-                    result[key] = [i.strip().strip('"').strip("'") for i in items if i.strip()]
-                elif val.lower() in ('true', 'false'):
-                    result[key] = val.lower() == 'true'
-                elif val.isdigit():
-                    result[key] = int(val)
-                else:
-                    try:
-                        result[key] = float(val)
-                    except ValueError:
-                        result[key] = val
-    except (OSError, PermissionError) as exc:
-        # SEC-03: Surface config read failures instead of silently ignoring
-        print(f'[WARN] Could not read config {path}: {exc}', file=sys.stderr)
-    return result
+        val = coerce(raw)
+    except (ValueError, TypeError):
+        logger.warning('%s has invalid type, using default %s', key, default)
+        return default
+    if not lo <= val <= hi:
+        logger.warning(
+            '%s=%s out of valid range (%s-%s), using default %s', key, val, lo, hi, default)
+        return default
+    return val
 
 
-def apply_config_file(config: Config, file_data: dict) -> None:
+def _coerce_str_list(key: str, raw: object, *, lower: bool = False) -> list[str]:
+    """Normalize a config list key into a list of strings, warn-and-skipping a
+    malformed shape or element.
+
+    A bare string or non-sequence is rejected whole — a string would otherwise
+    char-split through ``set.update`` (``"vendor"`` -> ``{'v','e',...}``) and a
+    scalar would raise ``TypeError`` (M9). Non-string elements are dropped rather
+    than crashing on ``.lower()`` (M8). ``lower`` lowercases entries, used for
+    extra_safe_values (case-insensitive match) and extra_extensions (M15).
+    """
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        logger.warning('%s must be a list of strings, ignoring', key)
+        return []
+    out: list[str] = []
+    for el in raw:
+        if not isinstance(el, str):
+            logger.warning('%s entry %r is not a string, skipping', key, el)
+            continue
+        out.append(el.lower() if lower else el)
+    return out
+
+
+def _apply_ingest_config(config: Config, file_data: TomlData) -> None:
+    """Apply the optional ``[ingest]`` table (from_gitleaks / from_trufflehog)."""
+    ingest = file_data.get('ingest', {})
+    if not isinstance(ingest, dict):
+        logger.warning('[ingest] config section must be a table, ignoring')
+        return
+    if 'from_gitleaks' in ingest:
+        val = ingest['from_gitleaks']
+        if not isinstance(val, str):
+            logger.warning('ingest.from_gitleaks must be a string path, ignoring')
+        else:
+            config.from_gitleaks = val
+    if 'from_trufflehog' in ingest:
+        val = ingest['from_trufflehog']
+        if not isinstance(val, str):
+            logger.warning('ingest.from_trufflehog must be a string path, ignoring')
+        else:
+            config.from_trufflehog = val
+
+
+def apply_config_file(config: Config, file_data: TomlData) -> None:
     """Merge values from a parsed config file into the Config object."""
-    if 'entropy_threshold' in file_data:
-        # SEC-38: Guard against type confusion (e.g. array where scalar expected).
-        try:
-            val = float(file_data['entropy_threshold'])
-        except (ValueError, TypeError):
-            print('[WARN] entropy_threshold has invalid type, using default 3.5',
-                  file=sys.stderr)
-            val = 3.5
-        # SEC-12: Bound entropy threshold to valid Shannon entropy range
-        if not 0.0 <= val <= 6.0:
-            print(f'[WARN] entropy_threshold={val} out of valid range (0.0-6.0), '
-                  f'using default 3.5', file=sys.stderr)
-            val = 3.5
-        config.entropy_threshold = val
-    if 'min_value_length' in file_data:
-        # SEC-38: Guard against type confusion.
-        try:
-            val_i = int(file_data['min_value_length'])
-        except (ValueError, TypeError):
-            print('[WARN] min_value_length has invalid type, using default 8',
-                  file=sys.stderr)
-            val_i = 8
-        # SEC-12: Bound min_value_length to reasonable range
-        if not 1 <= val_i <= 200:
-            print(f'[WARN] min_value_length={val_i} out of valid range (1-200), '
-                  f'using default 8', file=sys.stderr)
-            val_i = 8
-        config.min_value_length = val_i
+    for key, coerce, bounds, default in _SCALAR_VALIDATORS:
+        if key in file_data:
+            setattr(config, key, _coerce_scalar(key, file_data[key], coerce, bounds, default))
     if 'skip_dirs' in file_data:
-        config.skip_dirs.update(file_data['skip_dirs'])
+        config.skip_dirs.update(_coerce_str_list('skip_dirs', file_data['skip_dirs']))
     if 'skip_files' in file_data:
-        config.skip_files.update(file_data['skip_files'])
+        config.skip_files.update(_coerce_str_list('skip_files', file_data['skip_files']))
     if 'extra_extensions' in file_data:
-        config.extra_extensions.update(file_data['extra_extensions'])
+        exts = _coerce_str_list('extra_extensions', file_data['extra_extensions'], lower=True)
+        for ext in exts:
+            # M15: an un-dotted entry only matches a file named *exactly* that
+            # (the should_scan_file name fallback), never files carrying that
+            # extension — surface the likely footgun without changing matching
+            # (auto-prepending '.' would break the legitimate Dockerfile match).
+            if ext and not ext.startswith('.'):
+                logger.warning(
+                    "extra_extensions entry %r has no leading dot; it will only "
+                    "match files named exactly %r, not files with that extension",
+                    ext, ext)
+        config.extra_extensions.update(exts)
     if 'extra_safe_values' in file_data:
-        config.extra_safe_values.update(v.lower() for v in file_data['extra_safe_values'])
+        config.extra_safe_values.update(
+            _coerce_str_list('extra_safe_values', file_data['extra_safe_values'], lower=True))
     if 'replacement' in file_data:
-        config.custom_replacement = str(file_data['replacement'])
+        val = file_data['replacement']
+        if not isinstance(val, str):
+            logger.warning('replacement must be a string, ignoring')
+        else:
+            config.custom_replacement = val
+    _apply_ingest_config(config, file_data)

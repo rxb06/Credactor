@@ -5,7 +5,13 @@ Addresses: #17 (connection strings), #18 (PEM keys), #19 (provider prefixes),
            #20 (Vault/SOPS dynamic lookups), #21 (XML attributes)
 """
 
+from __future__ import annotations
+
 import re
+from collections.abc import Iterator
+from typing import NamedTuple
+
+from .types import Severity
 
 # ---------------------------------------------------------------------------
 # File types to scan
@@ -15,9 +21,13 @@ SCAN_EXTENSIONS = {
     '.env', '.cfg', '.ini', '.toml',
     '.yaml', '.yml',
     '.rb', '.go', '.java', '.php', '.cs', '.kt',
-    '.tf', '.hcl', '.conf', '.properties',
+    '.tf', '.hcl', '.conf', '.config', '.properties',
     '.xml',
+    '.pem', '.key', '.crt',           # M1: standalone PEM / key / cert files
 }
+
+# M1: extensionless private-key files, matched by name in should_scan_file.
+KEY_FILENAMES = {'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519'}
 
 # Directories / files to skip entirely
 SKIP_DIRS = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.tox',
@@ -92,10 +102,11 @@ DYNAMIC_LOOKUP_RE = re.compile(
 # Suspicious variable name patterns (case-insensitive)
 # ---------------------------------------------------------------------------
 CRED_VAR_PATTERNS = re.compile(
-    r'(?i)\b('
+    r'\b('
     r'api[_\-]?key|apikey|api[_\-]?token|'
     r'auth[_\-]?token|access[_\-]?token|bearer[_\-]?token|'
     r'client[_\-]?secret|secret[_\-]?key|app[_\-]?secret|'
+    r'(?:\w+[_\-])?secret(?:[_\-]\w+)?|'
     r'private[_\-]?key|signing[_\-]?key|'
     r'password|passwd|passphrase|pwd|'
     r'access[_\-]?key|access[_\-]?id|secret[_\-]?id|'
@@ -110,7 +121,8 @@ CRED_VAR_PATTERNS = re.compile(
     r'webhook[_\-]?secret|bot[_\-]?token|'
     r'consumer[_\-]?key|consumer[_\-]?secret|'
     r'refresh[_\-]?token|oauth[_\-]?token'
-    r')\b'
+    r')\b',
+    re.IGNORECASE,
 )
 
 # ---------------------------------------------------------------------------
@@ -149,24 +161,38 @@ _CONN_STRING_RE = re.compile(
 _PEM_KEY_RE = re.compile(r'-----BEGIN\s+(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----')
 
 # severity: critical > high > medium > low
-VALUE_PATTERNS = [
-    # Deterministic provider prefixes — critical severity
-    (_AWS_RE,          'AWS access key',       3.0, 'critical'),
-    (_GCP_RE,          'GCP API key',          3.0, 'critical'),
-    (_STRIPE_LIVE_RE,  'Stripe live key',      3.0, 'critical'),
-    (_GITHUB_RE,       'GitHub token',         3.0, 'critical'),
-    (_GITLAB_RE,       'GitLab token',         3.0, 'critical'),
-    (_SLACK_RE,        'Slack token',          3.0, 'critical'),
-    (_NPM_RE,          'npm token',            3.0, 'critical'),
-    (_PYPI_RE,         'PyPI token',           3.0, 'critical'),
-    (_PEM_KEY_RE,      'private key header',   0.0, 'critical'),
+class ValuePattern(NamedTuple):
+    pattern: re.Pattern[str]
+    label: str
+    min_entropy: float
+    severity: Severity
+
+
+VALUE_PATTERNS: list[ValuePattern] = [
+    # Deterministic provider prefixes — critical severity. L12: min_entropy 0.0
+    # because the fixed prefix + length already constrains the format, so the
+    # entropy gate is redundant and would otherwise drop a format-valid but
+    # low-entropy leaked token (a prefix + all-constant body). Matches the PEM
+    # row, which already uses 0.0. Intentional FP-over-FN tradeoff: format-valid
+    # placeholders (e.g. an AKIA + constant body in a .env.example) are also
+    # flagged — a false positive is noise, a missed live key is a leak. Suppress
+    # known placeholders via .credactorignore.
+    ValuePattern(_AWS_RE,          'AWS access key',       0.0, 'critical'),
+    ValuePattern(_GCP_RE,          'GCP API key',          0.0, 'critical'),
+    ValuePattern(_STRIPE_LIVE_RE,  'Stripe live key',      0.0, 'critical'),
+    ValuePattern(_GITHUB_RE,       'GitHub token',         0.0, 'critical'),
+    ValuePattern(_GITLAB_RE,       'GitLab token',         0.0, 'critical'),
+    ValuePattern(_SLACK_RE,        'Slack token',          0.0, 'critical'),
+    ValuePattern(_NPM_RE,          'npm token',            0.0, 'critical'),
+    ValuePattern(_PYPI_RE,         'PyPI token',           0.0, 'critical'),
+    ValuePattern(_PEM_KEY_RE,      'private key header',   0.0, 'critical'),
     # Structural patterns — high severity
-    (_JWT_RE,          'JWT token',            3.3, 'high'),
-    (_CONN_STRING_RE,  'connection string',    2.5, 'high'),
-    (_STRIPE_TEST_RE,  'Stripe test key',      3.0, 'medium'),
+    ValuePattern(_JWT_RE,          'JWT token',            3.3, 'high'),
+    ValuePattern(_CONN_STRING_RE,  'connection string',    2.5, 'high'),
+    ValuePattern(_STRIPE_TEST_RE,  'Stripe test key',      3.0, 'medium'),
     # Heuristic patterns — medium/low severity
-    (_HEX_RE,          'hex credential',       3.5, 'medium'),
-    (_B64_RE,          'high-entropy string',  3.8, 'low'),
+    ValuePattern(_HEX_RE,          'hex credential',       3.5, 'medium'),
+    ValuePattern(_B64_RE,          'high-entropy string',  3.8, 'low'),
 ]
 
 # ---------------------------------------------------------------------------
@@ -183,7 +209,7 @@ ASSIGNMENT_RE = re.compile(
         ["']?                          # optional quote around key name
         (?P<var>[\w.\-]+)              # variable or key name
         ["']?                          # optional closing quote around key name
-        \s*[:=]\s*                     # assignment or dict colon
+        \s*(?::=|[:=])\s*              # assignment, dict colon, or Go := (M4)
         (?:
             (?P<q>["'])                # opening quote
             (?P<val_q>(?:(?!(?P=q)).)+)  # value: everything up to matching quote
@@ -209,21 +235,28 @@ _XML_VAL_FIRST = re.compile(
 )
 
 
-def xml_attr_finditer(line: str):
-    """Yield (xml_key, xml_val) from XML attribute matches in either order."""
+def xml_attr_finditer(line: str) -> Iterator[tuple[str, str, tuple[int, int]]]:
+    """Yield ``(xml_key, xml_val, val_span)`` from XML attribute matches in
+    either order. ``val_span`` is the ``(start, end)`` of the value within
+    *line*, used by the scanner's per-line span dedup (L2)."""
+    # Hot-path guard: both patterns anchor on '<', so a line without it can never
+    # match — skip the two regex passes on the overwhelming majority of lines.
+    if '<' not in line:
+        return
     seen = set()
     for pattern in (_XML_KEY_FIRST, _XML_VAL_FIRST):
         for m in pattern.finditer(line):
             key, val = m.group('xml_key'), m.group('xml_val')
             if (key, val) not in seen:
                 seen.add((key, val))
-                yield key, val
-
-
-# Keep for backward compat in tests
-XML_ATTR_RE = _XML_KEY_FIRST
+                yield key, val, m.span('xml_val')
 
 # ---------------------------------------------------------------------------
 # Inline suppression comment pattern (#3)
 # ---------------------------------------------------------------------------
-SUPPRESS_RE = re.compile(r'credactor:\s*ignore', re.IGNORECASE)
+# The directive must immediately follow a comment opener (only whitespace
+# between), so a bare prose/string mention of "credactor:ignore" no longer
+# silences a real secret on the same line.  Openers cover every scanned
+# language's comment syntax (#, //, /*, <!--); SQL `--` is intentionally
+# excluded — no scanned file type uses it and it recurs in non-comment text.
+SUPPRESS_RE = re.compile(r'(?:#|//|/\*|<!--)\s*credactor:\s*ignore', re.IGNORECASE)

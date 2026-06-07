@@ -10,16 +10,18 @@ Credactor is a static analysis tool that uses regex patterns and entropy heurist
 - Not a runtime security tool — it scans files at rest, not live applications
 - Not a compliance certification tool
 - Not guaranteed to catch every credential format or encoding
+- Not a verifier — it does not check whether a detected value is a live, active credential (a finding may be expired, rotated, revoked, or a non-secret look-alike)
 
 ## Limitations
 
 ### Detection
 
 - **Regex-based.** Credactor matches known patterns (AWS keys, GitHub tokens, JWTs, etc.) and heuristics (entropy, variable names). Novel or obfuscated credential formats will be missed.
-- **No binary support.** Only text files are scanned. Credentials in compiled binaries, images, archives, or encrypted blobs are invisible.
+- **Recognised file types only.** Credactor scans a fixed set of source/config extensions (`.py`, `.js`, `.env`, `.yaml`, `.toml`, …), **not every file**. Binaries, images, archives, encrypted blobs, and text files of unrecognised types (e.g. `.txt`, `.md`, custom extensions) are skipped unless added via `extra_extensions` in `.credactor.toml`. General-purpose scanners that read every file will catch secrets in types Credactor skips.
 - **No cross-file tracking.** A credential split across two files (e.g. key in one, secret in another) is not detected.
 - **Entropy thresholds are tunable, not perfect.** Lowering them catches more but increases false positives. The defaults balance precision and recall for common codebases.
 - **No semantic analysis.** The tool does not understand code execution flow. A credential constructed at runtime from multiple variables will not be detected.
+- **External-scanner ingestion is BETA.** `--from-gitleaks` / `--from-trufflehog` ingest a third-party report as **untrusted input**; ingested findings are best-effort and should be reviewed especially carefully before redaction.
 
 ### Redaction
 
@@ -27,18 +29,22 @@ Credactor is a static analysis tool that uses regex patterns and entropy heurist
 - **Backup files contain secrets.** `.bak` files are unencrypted copies of the original file with the credential intact. Delete them securely after verifying replacements.
 - **No undo.** Once a replacement is made, the only recovery is from `.bak` files or version control. There is no built-in rollback.
 - **Replacement may break code.** Sentinel values (`REDACTED_BY_CREDACTOR`) will cause runtime failures. This is intentional — a loud failure is safer than a silent wrong credential — but verify before deploying.
+- **A false positive under `--fix-all` rewrites a legitimate value.** Redaction acts on *every* finding, including false positives — so a non-secret that happens to match a pattern (a git commit SHA, an example key, a format-valid placeholder) is replaced with the sentinel, silently corrupting otherwise-correct code or data. This is why `--dry-run` review matters more before `--fix-all` than the detection-only false-positive rate suggests. Always preview and suppress known false positives first.
 
 ### False Positives
 
 Credactor is actively improving false positive rates, but they are not yet zero. Common sources:
 
-- High-entropy strings that are not credentials (UUIDs, encoded data, internal IDs)
+- High-entropy strings that are not credentials (UUIDs, encoded data, internal IDs, git commit SHAs)
 - Variable names matching credential patterns with non-secret values
+- Format-valid placeholders and example keys (e.g. the canonical AWS `AKIA…EXAMPLE` documentation value), which deterministic provider patterns flag regardless of entropy
 - IDE-generated files and build artefacts with hash-like content
 
 Always run `--dry-run` first and review findings before redacting. Use `.credactorignore`, inline `# credactor:ignore` comments, or `.credactor.toml` to suppress known false positives.
 
 ### False Negatives
+
+**A run with no findings is not proof the code is secret-free.** It means only that nothing matched Credactor's patterns and heuristics — not that no secrets exist. Do not treat a clean scan as a security sign-off. Secrets are missed in cases such as:
 
 - Credentials in formats not covered by built-in patterns.
 - Credentials below the entropy threshold.
@@ -60,7 +66,7 @@ Always run `--dry-run` first and review findings before redacting. Use `.credact
 
 This software is provided "as is" under the Apache 2.0 licence, without warranty of any kind. See [LICENSE](../LICENSE) for the full terms.
 
-The authors are not liable for:
+The authors are not liable for, including without limitation:
 
 - Credentials missed by the scanner
 - Code broken by replacements

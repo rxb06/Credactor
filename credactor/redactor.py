@@ -4,62 +4,69 @@ File modification: backup, batch replacement, env-var mode.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
+from ._log import logger
 from .config import Config
-from .utils import detect_encoding, sanitize_for_terminal
+from .types import Finding
+from .utils import (
+    detect_encoding,
+    group_by_file,
+    mask_secret,
+    relativize,
+    sanitize_for_terminal,
+)
 
-# SEC-10: Pattern for dangerous characters in replacement strings that could
-# enable code injection when the replaced file is executed.
 _UNSAFE_REPLACEMENT_RE = re.compile(
     r'[`$\\;|&]|__import__|eval\s*\(|exec\s*\(|system\s*\(|subprocess'
 )
-
-# SEC-28: Track whether plaintext backup warning has been shown this run
-_backup_warned = False
 
 
 # ---------------------------------------------------------------------------
 # Replacement value generation (#5, #30)
 # ---------------------------------------------------------------------------
 def _make_replacement(
-    finding: dict,
+    finding: Finding,
     config: Config,
     filepath: str,
-) -> str:
-    """Produce the replacement string for a credential finding.
+) -> tuple[str, bool]:
+    """Produce the replacement string and whether it consumes the source quotes.
+
+    Returns ``(replacement, takes_quotes)``. ``takes_quotes`` is True only for a
+    bare env expression (e.g. ``os.environ["X"]``) that would be left nested
+    inside the original quotes if it merely replaced the bare value; it is False
+    for ``${X}`` interpolations (shell/YAML belong inside the quotes), the
+    sentinel fallback, and sentinel/custom modes (which stay quoted).
 
     Modes (config.replace_mode):
-      - 'sentinel':  REDACTED_BY_CREDACTOR  (or config.custom_replacement)
-      - 'env':       os.environ["VAR_NAME"]  (Python-style env var reference)
-      - 'custom':    config.custom_replacement
+      - 'env':                 language-aware env var reference
+                               (e.g. os.environ["VAR_NAME"]).
+      - 'sentinel' / 'custom': returns config.custom_replacement
+                               (default 'REDACTED_BY_CREDACTOR').
     """
-    mode = config.replace_mode
-
-    if mode == 'env':
+    if config.replace_mode == 'env':
         # Derive env var name from the variable name in the finding
         var_name = _derive_env_var_name(finding)
         ext = Path(filepath).suffix.lower()
-        # SEC-30: Defence-in-depth — validate the sanitised var name (not the
-        # full replacement, which intentionally contains shell metacharacters
-        # like ${} for shell/YAML/config files).
+        # Validate the sanitised var name (not the full replacement, which
+        # intentionally contains shell metacharacters like ${} for
+        # shell/YAML/config files).
         if _UNSAFE_REPLACEMENT_RE.search(var_name):
-            return 'REDACTED_BY_CREDACTOR'
-        return _env_ref_for_language(var_name, ext)
+            return 'REDACTED_BY_CREDACTOR', False
+        ref = _env_ref_for_language(var_name, ext)
+        # ${X} interpolations stay inside the source quotes; bare expressions
+        # (os.environ[...], process.env[...], ...) replace the quoted literal.
+        return ref, not ref.startswith('${')
 
-    if mode == 'custom':
-        return config.custom_replacement
-
-    # Default sentinel
-    return config.custom_replacement
+    return config.custom_replacement, False
 
 
-def _derive_env_var_name(finding: dict) -> str:
+def _derive_env_var_name(finding: Finding) -> str:
     """Extract a reasonable env var name from the finding type."""
     ftype = finding.get('type', '')
     # variable:api_key -> API_KEY
@@ -73,12 +80,16 @@ def _derive_env_var_name(finding: dict) -> str:
     elif ftype.startswith('pattern:') or ftype.startswith('xml-attr:'):
         label = ftype.split(':', 1)[1]
         raw = label.upper().replace(' ', '_').replace('-', '_')
+    # external:gitleaks:aws-access-token -> AWS_ACCESS_TOKEN
+    elif ftype.startswith('external:'):
+        label = ftype.rsplit(':', 1)[1]
+        raw = label.upper().replace(' ', '_').replace('-', '_')
     else:
         return 'CREDENTIAL'
 
-    # SEC-30: Strip non-identifier characters to prevent code injection via
-    # crafted xml-attr keys (e.g. "password]);evil()//").  Environment variable
-    # names must be alphanumeric + underscore only.
+    # Strip non-identifier characters to prevent code injection via crafted
+    # xml-attr keys (e.g. "password]);evil()//").  Env var names must be
+    # alphanumeric + underscore only.
     sanitized = re.sub(r'[^A-Za-z0-9_]', '', raw)
     return sanitized if sanitized else 'CREDENTIAL'
 
@@ -105,20 +116,86 @@ def _env_ref_for_language(var_name: str, ext: str) -> str:
     return f'${{{var_name}}}'
 
 
+def _replace_quoted(original: str, full_value: str, replacement: str) -> str:
+    """Insert a bare env expression in place of a *quoted* credential literal,
+    consuming the surrounding quotes so it isn't left nested inside them
+    (api_key = "os.environ[...]" would be invalid syntax).
+
+    When the value is not a standalone quoted literal — e.g. a secret embedded
+    in a larger string such as a Bearer header or a connection URL — a bare
+    expression cannot be inserted without breaking the surrounding quotes, so
+    the secret is replaced with the sentinel instead (always valid).
+    """
+    for q in ('"', "'"):
+        token = f'{q}{full_value}{q}'
+        if token in original:
+            other = '"' if q == "'" else "'"
+            # If the bare expression carries `other`-quotes and the matched
+            # token is itself nested inside an enclosing `other`-quoted literal
+            # (so `other` still appears once the token is removed), inlining the
+            # expression would break that outer string — e.g.
+            # auth = "Bearer 'KEY'"  ->  auth = "Bearer os.environ["X"]".
+            # Fall back to the sentinel, which is always valid.
+            if other in replacement and other in original.replace(token, '', 1):
+                break
+            return original.replace(token, replacement, 1)
+    return original.replace(full_value, 'REDACTED_BY_CREDACTOR', 1)
+
+
 # ---------------------------------------------------------------------------
 # Backup (#1)
 # ---------------------------------------------------------------------------
+def _system_symlink_prefixes() -> tuple[tuple[str, str], ...]:
+    """macOS aliases ``/tmp``, ``/var``, ``/etc`` to ``/private/*`` via stable
+    system symlinks; a backup dir under them (e.g. the documented
+    ``--secure-backup-dir /tmp/...``) is benign and must not be rejected.
+
+    Computed once at import; empty on Linux where these are real directories.
+    """
+    pairs: list[tuple[str, str]] = []
+    for root in ('/tmp', '/var', '/etc'):
+        try:
+            if os.path.islink(root):
+                pairs.append((root, os.path.realpath(root)))
+        except OSError:
+            pass
+    return tuple(pairs)
+
+
+_SYSTEM_SYMLINK_PREFIXES = _system_symlink_prefixes()
+
+
+def _backup_dir_via_unsafe_symlink(path_str: str) -> bool:
+    """True if *path_str* reaches its real location through a symlink the tool
+    cannot vouch for (M11).
+
+    The previous guard checked only the leaf component with ``os.path.islink``,
+    so a symlinked PARENT with a real leaf dir slipped through and let the backup
+    escape. This compares the fully-resolved path against the lexical path,
+    excepting only the well-known macOS system-temp symlinks so the documented
+    ``--secure-backup-dir /tmp/...`` workflow is not falsely rejected. A
+    not-yet-created dir with no symlink in its path is allowed (``realpath``
+    resolves the existing prefix and appends the rest lexically).
+    """
+    abspath = os.path.abspath(path_str)
+    expected = abspath
+    for src, dst in _SYSTEM_SYMLINK_PREFIXES:
+        if abspath == src or abspath.startswith(src + os.sep):
+            expected = dst + abspath[len(src):]
+            break
+    return os.path.realpath(path_str) != expected
+
+
 def _create_backup(filepath: str, config: Config) -> str | None:
     """Create a .bak copy of the file. Returns backup path or None on failure.
 
-    SEC-01: When ``config.secure_backup_dir`` is set, the backup is placed
+    When ``config.secure_backup_dir`` is set, the backup is placed
     in that directory instead of beside the original file.
     """
     bak = filepath + '.bak'
 
-    # SEC-09: Atomic backup via mkstemp (O_CREAT|O_EXCL prevents symlink race).
-    # Previous approach used islink() + copy2() with a TOCTOU gap between
-    # the check and the write.
+    # Atomic backup via mkstemp (O_CREAT|O_EXCL prevents symlink race);
+    # prior approach used islink() + copy2() with a TOCTOU gap.
     dir_name = os.path.dirname(filepath) or '.'
     tmp_bak: str | None = None
     try:
@@ -127,54 +204,60 @@ def _create_backup(filepath: str, config: Config) -> str | None:
         shutil.copy2(filepath, tmp_bak)
         os.replace(tmp_bak, bak)
         tmp_bak = None  # rename succeeded
-    except (OSError, PermissionError) as exc:
-        print(f'  [WARN] Could not create backup {bak}: {exc}', file=sys.stderr)
+    except OSError as exc:
+        logger.warning('Could not create backup %s: %s', bak, exc)
         if tmp_bak is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_bak)
-            except OSError:
-                pass
         return None
 
-    # SEC-28: Warn once about plaintext backups when not using secure options
-    global _backup_warned
-    if not _backup_warned and not config.secure_delete and not config.secure_backup_dir:
-        print('  [WARN] Plaintext backup created beside original file.',
-              file=sys.stderr)
-        print('    Use --secure-delete to auto-wipe, --secure-backup-dir to store '
-              'outside repo, or --no-backup to skip.', file=sys.stderr)
-        _backup_warned = True
+    if not config.backup_warn_shown and not config.secure_delete and not config.secure_backup_dir:
+        logger.warning(
+            'Plaintext backup created beside original file.\n'
+            '  Use --secure-delete to auto-wipe, --secure-backup-dir to store '
+            'outside repo, or --no-backup to skip.',
+        )
+        config.backup_warn_shown = True
 
-    # SEC-01: Move backup to secure directory if configured
     if config.secure_backup_dir:
-        dest_dir = Path(config.secure_backup_dir).resolve()
-        # SEC-20: Refuse if secure-backup-dir is a symlink to untrusted location.
-        # Return None to signal failure — caller will skip redaction for this file.
-        if os.path.islink(config.secure_backup_dir):
-            print(f'  [ERROR] --secure-backup-dir is a symlink (possible attack): '
-                  f'{config.secure_backup_dir}', file=sys.stderr)
-            print('  Refusing to proceed — backup security cannot be guaranteed.',
-                  file=sys.stderr)
+        # M11: refuse if the backup dir reaches its target through a symlink —
+        # leaf OR any ancestor. The prior os.path.islink() check inspected only
+        # the leaf, so a symlinked PARENT could silently redirect the backup
+        # outside the intended directory. Return None so the caller skips
+        # redaction for this file.
+        if _backup_dir_via_unsafe_symlink(config.secure_backup_dir):
+            logger.error(
+                '--secure-backup-dir resolves through a symlink (possible attack): %s\n'
+                '  Refusing to proceed — backup security cannot be guaranteed.',
+                config.secure_backup_dir,
+            )
             # Clean up the in-repo backup we already created
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(bak)
-            except OSError:
-                pass
             return None
+        dest_dir = Path(config.secure_backup_dir).resolve()
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
             dest = str(dest_dir / Path(bak).name)
             shutil.move(bak, dest)
             return dest
-        except (OSError, PermissionError) as exc:
-            print(f'  [WARN] Could not move backup to {dest_dir}: {exc}',
-                  file=sys.stderr)
-            # Fall through — backup still exists at original location
+        except OSError as exc:
+            # L10: fail-closed (matches the symlink branch above). The user
+            # asked for backups OUTSIDE the repo; if that's impossible, do NOT
+            # silently leave a plaintext .bak inside the repo and redact anyway.
+            # Clean up the in-repo bak and return None so the caller skips this
+            # file (no backup, no redaction).
+            logger.error(
+                'Could not move backup to %s: %s — refusing to leave a plaintext '
+                'backup inside the repo; skipping this file.', dest_dir, exc)
+            with contextlib.suppress(OSError):
+                os.unlink(bak)
+            return None
     return bak
 
 
 def _secure_delete(filepath: str) -> None:
-    """SEC-01: Overwrite file with random bytes before unlinking."""
+    """Overwrite file with random bytes before unlinking."""
     try:
         size = os.path.getsize(filepath)
         with open(filepath, 'wb') as fh:
@@ -182,9 +265,8 @@ def _secure_delete(filepath: str) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.unlink(filepath)
-    except (OSError, PermissionError) as exc:
-        print(f'  [WARN] Secure delete failed for {filepath}: {exc}',
-              file=sys.stderr)
+    except OSError as exc:
+        logger.warning('Secure delete failed for %s: %s', filepath, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +274,7 @@ def _secure_delete(filepath: str) -> None:
 # ---------------------------------------------------------------------------
 def batch_replace_in_file(
     filepath: str,
-    file_findings: list[dict],
+    file_findings: list[Finding],
     config: Config,
 ) -> tuple[int, int]:
     """Replace all findings in a single file in one read-modify-write pass.
@@ -208,17 +290,16 @@ def batch_replace_in_file(
     # #16 — detect encoding
     encoding = detect_encoding(filepath)
 
-    # Preserve file permissions (SEC-22: include setuid/setgid/sticky bits)
+    # Preserve file permissions (include setuid/setgid/sticky bits)
     try:
         orig_stat = os.stat(filepath)
         orig_mode = orig_stat.st_mode & 0o7777  # full mode including setuid/setgid
     except OSError:
         orig_mode = None
 
-    # SEC-15: Acquire advisory file lock to mitigate TOCTOU races between
-    # read and replace. Uses fcntl on Unix; silently skipped on Windows.
-    # On Windows fcntl is unavailable, so the handle must be closed
-    # immediately — keeping it open would block os.replace() later.
+    # Acquire advisory file lock to mitigate TOCTOU races between read and
+    # replace.  Uses fcntl on Unix; on Windows fcntl is unavailable so the
+    # handle is closed immediately to avoid blocking os.replace().
     lock_fh = None
     try:
         lock_fh = open(filepath, 'r')  # noqa: SIM115
@@ -236,100 +317,122 @@ def batch_replace_in_file(
         pass
 
     try:
-        with open(filepath, encoding=encoding, errors='surrogateescape') as fh:
-            lines = fh.readlines()
-    except (OSError, PermissionError) as exc:
-        print(f'  [ERROR] Cannot read {filepath}: {exc}', file=sys.stderr)
-        if lock_fh:
-            lock_fh.close()
-        return 0, len(file_findings)
-
-    # #1 — backup before modifying (immediately after read per SEC-15)
-    bak: str | None = None
-    if not config.no_backup:
-        bak = _create_backup(filepath, config)
-        if bak is None:
-            print(f'  [ERROR] Backup failed for {filepath} — skipping replacements.',
-                  file=sys.stderr)
+        try:
+            # newline='' preserves each line's original terminator (CRLF/LF) so
+            # redaction never normalizes line endings on untouched lines.
+            with open(filepath, encoding=encoding, errors='surrogateescape', newline='') as fh:
+                lines = fh.readlines()
+        except OSError as exc:
+            logger.error('Cannot read %s: %s', filepath, exc)
             return 0, len(file_findings)
 
-    replaced = 0
-    failed = 0
+        # #1 — backup before modifying (immediately after read)
+        bak: str | None = None
+        if not config.no_backup:
+            bak = _create_backup(filepath, config)
+            if bak is None:
+                logger.error('Backup failed for %s — skipping replacements.', filepath)
+                return 0, len(file_findings)
 
-    # Sort by line number descending so earlier replacements don't shift later ones
-    sorted_findings = sorted(file_findings, key=lambda f: f['line'], reverse=True)
+        replaced = 0
+        failed = 0
 
-    for finding in sorted_findings:
-        lineno = finding['line']
-        full_value = finding['full_value']
-        idx = lineno - 1
+        # Sort by line number descending so earlier replacements don't shift later ones
+        sorted_findings = sorted(file_findings, key=lambda f: f['line'], reverse=True)
 
-        if idx >= len(lines):
-            print(f'  [WARN] Line {lineno} out of range in {filepath} — skipping.')
-            failed += 1
-            continue
+        for finding in sorted_findings:
+            lineno = finding['line']
+            full_value = finding['full_value']
+            idx = lineno - 1
 
-        original = lines[idx]
-        if full_value not in original:
-            print(f'  [WARN] Value no longer found on line {lineno} (already replaced?).')
-            failed += 1
-            continue
+            if idx >= len(lines):
+                logger.warning('Line %d out of range in %s — skipping.', lineno, filepath)
+                failed += 1
+                continue
 
-        replacement = _make_replacement(finding, config, filepath)
-        lines[idx] = original.replace(full_value, replacement, 1)
-        replaced += 1
+            original = lines[idx]
+            if full_value not in original:
+                logger.warning(
+                    'Value no longer found on line %d in %s (already replaced?).', lineno, filepath,
+                )
+                failed += 1
+                continue
 
-    # Atomic write: write to temp file, then rename over original.
-    # Prevents corruption if process crashes mid-write.
-    # SEC-07: finally block ensures temp file cleanup even on unexpected crashes,
-    # preventing plaintext credential residue on disk.
-    dir_name = os.path.dirname(filepath) or '.'
-    tmp_path: str | None = None
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.credactor.tmp')
-        with os.fdopen(fd, 'w', encoding=encoding, errors='surrogateescape') as fh:
-            fh.writelines(lines)
-        os.replace(tmp_path, filepath)
-        tmp_path = None  # rename succeeded — nothing to clean up
-    except (OSError, PermissionError) as exc:
-        print(f'  [ERROR] Cannot write {filepath}: {exc}', file=sys.stderr)
-        return 0, len(file_findings)
-    finally:
-        # SEC-07: Always remove temp file if it still exists (crash safety)
-        if tmp_path is not None:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            replacement, takes_quotes = _make_replacement(finding, config, filepath)
+            if takes_quotes:
+                lines[idx] = _replace_quoted(original, full_value, replacement)
+            else:
+                lines[idx] = original.replace(full_value, replacement, 1)
+            replaced += 1
 
-    # Restore original file permissions
-    if orig_mode is not None:
+        # H10: the per-finding replace handles one occurrence each. If the same
+        # secret value also appears uncredited elsewhere on the line (a trailing
+        # comment, or a second non-credential variable), those copies would survive.
+        # Sweep every touched line and replace any remaining exact copy of a redacted
+        # value with the sentinel, so no secret literal is ever left behind.
+        if replaced:
+            stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
+                     else config.custom_replacement)
+            values_by_line: dict[int, set[str]] = {}
+            for finding in file_findings:
+                values_by_line.setdefault(finding['line'] - 1, set()).add(finding['full_value'])
+            for idx, values in values_by_line.items():
+                if idx >= len(lines):
+                    continue
+                # One compiled alternation per line (longest value first so a short
+                # value can't shadow a longer one). Word-boundary anchors keep us from
+                # corrupting a substring of a larger token like 123456789. The
+                # replacement is a function so a custom string with backreference-like
+                # text (e.g. '\1') is inserted literally, not as a regex template.
+                pat = re.compile(
+                    r'(?<!\w)(?:'
+                    + '|'.join(re.escape(v) for v in sorted(values, key=len, reverse=True))
+                    + r')(?!\w)'
+                )
+                lines[idx] = pat.sub(lambda _m: stray, lines[idx])
+
+        # Atomic write: write to temp file, then rename over original.
+        # Prevents corruption if process crashes mid-write.
+        dir_name = os.path.dirname(filepath) or '.'
+        tmp_path: str | None = None
         try:
-            os.chmod(filepath, orig_mode)
-        except OSError:
-            pass
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.credactor.tmp')
+            with os.fdopen(fd, 'w', encoding=encoding, errors='surrogateescape', newline='') as fh:
+                fh.writelines(lines)
+            os.replace(tmp_path, filepath)
+            tmp_path = None  # rename succeeded — nothing to clean up
+        except OSError as exc:
+            logger.error('Cannot write %s: %s', filepath, exc)
+            return 0, len(file_findings)
+        finally:
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
 
-    # SEC-01: Secure-delete backup after successful replacement
-    if bak and config.secure_delete and replaced > 0:
-        _secure_delete(bak)
+        # Restore original file permissions
+        if orig_mode is not None:
+            with contextlib.suppress(OSError):
+                os.chmod(filepath, orig_mode)
 
-    # SEC-15: Release advisory file lock
-    if lock_fh:
-        lock_fh.close()
+        if bak and config.secure_delete and replaced > 0:
+            _secure_delete(bak)
 
-    return replaced, failed
+        return replaced, failed
+    finally:
+        if lock_fh is not None:
+            lock_fh.close()
 
 
 def replace_single(
     filepath: str,
-    finding: dict,
+    finding: Finding,
     config: Config,
 ) -> bool:
     """Replace a single finding. Used in interactive mode.
 
     Returns True on success.
     """
-    replaced, failed = batch_replace_in_file(filepath, [finding], config)
+    replaced, _ = batch_replace_in_file(filepath, [finding], config)
     return replaced > 0
 
 
@@ -337,7 +440,7 @@ def replace_single(
 # Interactive review
 # ---------------------------------------------------------------------------
 def interactive_review(
-    findings: list[dict],
+    findings: list[Finding],
     root: str,
     config: Config,
 ) -> int:
@@ -354,23 +457,17 @@ def interactive_review(
     if config.replace_mode == 'env':
         replacement_desc = 'env var reference'
 
-    from .utils import mask_secret
-
     print(f'{"=" * 70}')
     print(f'  INTERACTIVE REDACTION  --  {total} credential(s) found')
     print(f"  Answer y to replace each value with '{replacement_desc}', n (or Enter) to skip.")
     print(f'{"=" * 70}\n')
 
     for i, finding in enumerate(findings, 1):
-        try:
-            rel = Path(finding['file']).relative_to(root_path)
-        except ValueError:
-            rel = Path(finding['file'])
+        rel = relativize(finding['file'], root_path)
 
         masked = mask_secret(finding['full_value'])
 
-        # SEC-16: Sanitize display strings to prevent terminal injection
-        safe_rel = sanitize_for_terminal(str(rel))
+        safe_rel = sanitize_for_terminal(rel)
         safe_type = sanitize_for_terminal(finding['type'])
         safe_masked = sanitize_for_terminal(masked)
 
@@ -412,7 +509,7 @@ def interactive_review(
 
 
 def fix_all(
-    findings: list[dict],
+    findings: list[Finding],
     root: str,
     config: Config,
 ) -> int:
@@ -421,25 +518,23 @@ def fix_all(
     Returns the number of unresolved findings.
     """
     # Group by file for batch replacement
-    by_file: dict[str, list[dict]] = {}
-    for f in findings:
-        by_file.setdefault(f['file'], []).append(f)
+    by_file = group_by_file(findings)
 
     total_replaced = 0
     total_failed = 0
 
     for filepath, file_findings in by_file.items():
-        r, f = batch_replace_in_file(filepath, file_findings, config)
-        total_replaced += r
-        total_failed += f
+        replaced, failed = batch_replace_in_file(filepath, file_findings, config)
+        total_replaced += replaced
+        total_failed += failed
 
-    _print_summary(total_replaced, total_failed, len(findings))
+    _print_summary(total_replaced, total_failed, len(findings), label='failed')
     return total_failed
 
 
-def _print_summary(replaced: int, skipped: int, total: int) -> None:
+def _print_summary(replaced: int, other: int, total: int, label: str = 'skipped') -> None:
     print(f'{"=" * 70}')
-    print(f'  Summary:  {replaced} replaced  |  {skipped} skipped  |  {total} total')
+    print(f'  Summary:  {replaced} replaced  |  {other} {label}  |  {total} total')
     if replaced:
         print('  Reminder: rotate / revoke any credentials that were just redacted.')
         print('  SECURITY: .bak backup files contain original credentials in PLAINTEXT.')
