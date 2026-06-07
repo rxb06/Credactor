@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-06-07
+
 ### Added
 
 - **External-scanner ingestion (BETA).** New `--from-gitleaks FILE` and
@@ -127,15 +129,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SEC-33:** Path containment prefix collision — `_is_within_root()` now appends `os.sep` after `normpath()` to prevent `/tmp/repo` matching `/tmp/repo_evil`.
 - **SEC-34:** Template safe-value bypass — unclosed `${AKIA...` was falsely marked safe because the `$`-prefix check was too broad. Now requires matching closing delimiters.
 - **SEC-20:** Secure backup dir symlink — now returns an error and skips redaction instead of silently falling back to an in-repo backup.
-
-### Added
-
-- Security test suite (`tests/test_security.py`) covering path containment, symlink boundaries, CI enforcement, and template safe-value logic.
-
-## [2.3.1] - 2026-03-27
-
-### Fixed
-
 - **SEC-30:** Code injection via crafted XML attribute keys in `--replace-with env` mode. Env var names now stripped to `[A-Za-z0-9_]`. JS/TS uses bracket notation.
 - **SEC-09:** Atomic backup creation via `mkstemp()` + `os.replace()` eliminates TOCTOU race.
 - **SEC-25/SEC-32:** Path traversal guards now reject `..` as a path component, not a substring.
@@ -143,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Security test suite (`tests/test_security.py`) covering path containment, symlink boundaries, CI enforcement, and template safe-value logic.
 - **SEC-31:** Warning when `.credactor.toml` or `.credactorignore` are staged alongside code changes.
 - **SEC-13b:** Warning on extension-targeting wildcard patterns in `.credactorignore`.
 - Windows compatibility: drive root protection, permission test skip, `fcntl` handle fix.
@@ -159,8 +153,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--version` flag.
 - Clean `KeyboardInterrupt` handling (exit 130, no traceback).
 - Home directory scan protection (prevents hang on `~`).
-
-## [2.2.2] - 2026-03-27
 
 ### Fixed
 
@@ -194,11 +186,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git staged file and history scanning.
 - Pre-commit hook support (beta).
 
-[Unreleased]: https://github.com/rxb06/Credactor/compare/v2.3.3...HEAD
+[Unreleased]: https://github.com/rxb06/Credactor/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/rxb06/Credactor/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/rxb06/Credactor/compare/v2.3.2...v2.3.3
-[2.3.2]: https://github.com/rxb06/Credactor/compare/v2.3.1...v2.3.2
-[2.3.1]: https://github.com/rxb06/Credactor/compare/v2.3.0...v2.3.1
-[2.3.0]: https://github.com/rxb06/Credactor/compare/v2.2.2...v2.3.0
-[2.2.2]: https://github.com/rxb06/Credactor/compare/v2.2.1...v2.2.2
+[2.3.2]: https://github.com/rxb06/Credactor/compare/v2.3.0...v2.3.2
+[2.3.0]: https://github.com/rxb06/Credactor/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/rxb06/Credactor/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/rxb06/Credactor/releases/tag/v2.2.0

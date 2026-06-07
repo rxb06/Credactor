@@ -65,20 +65,17 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 - **SEC-21** — CI log prefix exposure: Credential masking shows only the first 4 characters.
 - **SEC-22** — Setuid/setgid bit preservation.
 
-### v2.2.2
+### v2.3.0
 
 - **SEC-23** — File symlink boundary enforcement: File symlinks resolving outside the scan root are skipped.
 - **SEC-24** — SARIF output: `json.dumps` provides the injection safety; the masked preview in `message.text` is additionally HTML-escaped as defence-in-depth.
 - **SEC-25** — Git history path traversal guard: Paths with `..` traversal sequences are rejected.
-
-### v2.3.0
-
 - **SEC-26** — CI read-only enforcement: `--ci` blocks `--fix-all` and forces `--dry-run`.
 - **SEC-27** — Suppression audit trail: `--verbose` emits `[SKIP]` notices for every suppressed finding.
 - **SEC-28** — Plaintext backup warning: One-time warning when backups are created without secure options.
 - **SEC-29** — Config trust boundary enforcement in CI: External configs refused in CI mode.
 
-### v2.3.1
+### v2.3.2
 
 - **SEC-30** — Env var name sanitisation: Non-identifier characters stripped from XML attribute keys. JS/TS uses bracket notation.
 - **SEC-31** — Staged config tampering warning.
@@ -86,9 +83,6 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 - **SEC-09** — Atomic backup creation (updated): `tempfile.mkstemp()` + `os.replace()` eliminates TOCTOU race.
 - **SEC-25/SEC-32** — Path traversal guard improvements: Component-level `..` check instead of substring.
 - **SEC-15** — Windows file handle fix: Handle closed before `os.replace()` on Windows.
-
-### v2.3.2
-
 - **SEC-33** — Cross-platform path containment: `os.path.normpath()` then `os.sep` append after normalisation to prevent prefix collisions.
 - **SEC-34** — Template safe-value closing delimiter: Requires matching `}`, `%}`, or `}}`. Fixes `$`-prefix bypass.
 - **SEC-20** — Secure backup dir symlink (updated): Returns error and skips redaction instead of silent fallback.
