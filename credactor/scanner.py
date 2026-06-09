@@ -455,8 +455,6 @@ def scan_file(
 ) -> list[Finding]:
     """Scan a single file for credential findings.
     """
-    findings: list[Finding] = []
-
     #file size guard to prevent OOM on huge files | Hard-Cap at 50MB
     try:
         file_size = Path(filepath).stat().st_size
@@ -465,7 +463,7 @@ def scan_file(
                 'Skipping %s: file too large (%.1f MB > %.0f MB limit)',
                 filepath, file_size / 1024 / 1024, _MAX_FILE_SIZE / 1024 / 1024,
             )
-            return findings
+            return []
     except OSError:
         pass  # proceed; open() will fail with a better message
 
@@ -477,6 +475,29 @@ def scan_file(
         # otherwise --fail-on-error silently passes over files it could not read.
         # scan_file is a library re-raiser: the caller owns the warning.
         raise
+
+    return scan_lines(filepath, lines, config=config, allowlist=allowlist)
+
+
+def scan_lines(
+    filepath: str,
+    lines: list[str],
+    *,
+    config: Config | None = None,
+    allowlist: AllowList | None = None,
+) -> list[Finding]:
+    """Run the full scan \u2014 PEM-block detection, per-line passes, and the
+    multi-line string pass \u2014 over *lines* (with terminators, as from
+    ``readlines()``/``splitlines(keepends=True)``).
+
+    Shared by ``scan_file`` (lines read from disk) and the staged scanner
+    (lines decoded from the git index blob) so the two paths cannot drift:
+    previously the staged path ran a bare per-line loop and missed PEM bodies
+    and secrets inside triple-quoted / template-literal strings.
+
+    May strip a BOM from ``lines[0]`` in place; both callers pass a fresh list.
+    """
+    findings: list[Finding] = []
 
     # Strip BOM from first line if present
     if lines and lines[0].startswith('\ufeff'):

@@ -120,7 +120,7 @@ Each finding is shown before its prompt (verified output):
 ```
 
 `y`/`yes` prints `-> Replaced.`; `n`/Enter prints `-- Skipped.`; Ctrl-C or EOF
-stops and reports how many files were already modified.
+stops and reports how many replacements were already applied.
 
 ### `--dry-run`
 
@@ -165,6 +165,8 @@ blob**. **Read-only: it forces dry-run even with `--fix-all`** (a pre-commit hoo
 must never rewrite the tree mid-commit). Verified: `--staged --fix-all --yes` on a
 staged secret exits **1** and leaves the working file **unmodified**. In a
 non-git directory it exits **2** (see below).
+Staged content gets the identical full scan as a working-tree file — PEM
+blocks and secrets inside triple-quoted / template-literal strings included.
 Staged `.json` files follow the same opt-in as the directory walk: scanned only
 with `--scan-json`, otherwise skipped with a warning naming the file.
 
@@ -362,6 +364,10 @@ Verified keys:
 | `replacement` | Default custom replacement (an explicit `--replacement` wins). |
 | `[ingest]` `from_gitleaks` / `from_trufflehog` | Report paths for ingestion. |
 
+An unknown top-level key is ignored **with a warning** (typo guard — e.g. a
+misspelled `entropy_treshold` does not silently scan at the default
+sensitivity).
+
 ### `--config PATH`
 
 Use a specific config file (verified: `--config cfg.toml` with
@@ -383,8 +389,9 @@ During a directory walk only these extensions are read:
 `.conf` `.config` `.properties` `.xml` `.pem` `.key` `.crt`
 
 plus SSH / private-key files matched by name (`id_rsa`, `id_dsa`, `id_ecdsa`,
-`id_ed25519`). `.json` is read only with `--scan-json`. A file named **directly**
-on the command line is scanned even if its extension is not in this list.
+`id_ed25519`). `.json` is read only with `--scan-json` (in directory walks and
+`--staged` alike). A file named **directly** on the command line is scanned
+even if its extension is not in this list.
 
 ### `--fail-on-error`
 

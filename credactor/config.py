@@ -242,8 +242,20 @@ def _apply_ingest_config(config: Config, file_data: TomlData) -> None:
             config.from_trufflehog = val
 
 
+# Top-level keys apply_config_file consumes. Anything else warns: every
+# MALFORMED known key already warns, so a silently dropped typo (e.g.
+# 'entropy_treshold') was the one config mistake with no signal — for a
+# security tool that can mean scanning at the wrong sensitivity unnoticed.
+_KNOWN_KEYS = frozenset({
+    'entropy_threshold', 'min_value_length', 'skip_dirs', 'skip_files',
+    'extra_extensions', 'extra_safe_values', 'replacement', 'ingest',
+})
+
+
 def apply_config_file(config: Config, file_data: TomlData) -> None:
     """Merge values from a parsed config file into the Config object."""
+    for key in sorted(file_data.keys() - _KNOWN_KEYS):
+        logger.warning('Unknown config key %r ignored — check for typos.', key)
     for key, coerce, bounds, default in _SCALAR_VALIDATORS:
         if key in file_data:
             setattr(config, key, _coerce_scalar(key, file_data[key], coerce, bounds, default))

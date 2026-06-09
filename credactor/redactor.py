@@ -481,8 +481,8 @@ def interactive_review(
             try:
                 answer = input("  Replace? [y/N]: ").strip().lower()
             except (KeyboardInterrupt, EOFError):
-                print(f'\n\n  Interrupted — {replaced} file(s) already '
-                      f'modified. No further changes will be made.')
+                print(f'\n\n  Interrupted — {replaced} replacement(s) already '
+                      f'applied. No further changes will be made.')
                 if replaced and not config.no_backup:
                     print('  .bak backups exist for modified files.')
                 _print_summary(replaced, skipped, total)

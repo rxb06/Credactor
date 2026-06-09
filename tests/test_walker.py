@@ -313,6 +313,39 @@ class TestStagedScanning:
                    and 'credentials.json' in r.message
                    for r in credactor_caplog.records)
 
+    def test_staged_multiline_secret_detected(self, tmp_dir):
+        # The staged path reuses scan_lines(), so a secret inside a
+        # triple-quoted block is caught. The old bare per-line loop missed it:
+        # the high-entropy pass requires a preceding quote on the same line,
+        # which a bare line inside a multi-line string never has.
+        repo = self._init_repo(tmp_dir)
+        secret = 'aB3dE5gH7jK9mN1pQ4sU6wX8zC2vF0yT5rL8nM3kP7qW1eR9tY4uI6oA2sD5fG8h'
+        with open(os.path.join(repo, 'note.py'), 'w') as f:
+            f.write(f'doc = """\nembedded config blob\n{secret}\n"""\n')
+        subprocess.run(['git', 'add', '-A'], cwd=repo, check=True,
+                       capture_output=True)
+        findings, errored = scan_staged_files(repo, config=Config(no_color=True))
+        assert any(f['type'].startswith('multiline:')
+                   and f['full_value'] == secret for f in findings), findings
+        assert errored == []
+
+    def test_staged_pem_scanned_as_block(self, tmp_dir):
+        # scan_lines() applies the PEM state machine to staged blobs: the key
+        # is reported once as a block (header line) with the body skipped. The
+        # old per-line loop labelled it 'private key header' instead.
+        repo = self._init_repo(tmp_dir)
+        with open(os.path.join(repo, 'server.pem'), 'w') as f:
+            f.write('-----BEGIN RSA PRIVATE KEY-----\n'
+                    'MIIEpAIBAAKCAQEA7examplebodyline1\n'
+                    'MIIEpAIBAAKCAQEA7examplebodyline2\n'
+                    '-----END RSA PRIVATE KEY-----\n')
+        subprocess.run(['git', 'add', '-A'], cwd=repo, check=True,
+                       capture_output=True)
+        findings, errored = scan_staged_files(repo, config=Config(no_color=True))
+        assert any(f['type'] == 'pattern:private key block' and f['line'] == 1
+                   for f in findings), findings
+        assert errored == []
+
     def test_staged_json_lockfile_stays_excluded(self, tmp_dir, credactor_caplog):
         # SKIP_FILES lockfiles are excluded with and without --scan-json, and
         # never trigger the skip warning (matching the directory walk).

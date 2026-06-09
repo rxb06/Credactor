@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from credactor.config import Config, apply_config_file, load_config_file
+from credactor.config import ENTROPY_DEFAULT, Config, apply_config_file, load_config_file
 
 
 class TestConfigPostInit:
@@ -239,6 +239,32 @@ class TestApplyConfigFile:
         c = Config()
         apply_config_file(c, {'unknown_key': 'value'})
         assert not hasattr(c, 'unknown_key')
+
+    def test_unknown_keys_warn(self, credactor_caplog):
+        # A typo'd key must not be dropped silently — every malformed KNOWN key
+        # already warns, and a typo can mean scanning at the wrong sensitivity.
+        c = Config()
+        apply_config_file(c, {'entropy_treshold': 3.0})
+        assert c.entropy_threshold == ENTROPY_DEFAULT  # typo did not take effect
+        assert any('entropy_treshold' in r.message
+                   for r in credactor_caplog.records)
+
+    def test_known_keys_do_not_warn_as_unknown(self, credactor_caplog):
+        # All eight consumed keys at once — a key dropped from _KNOWN_KEYS (or
+        # a future consumed key not added to it) would warn spuriously here.
+        c = Config()
+        apply_config_file(c, {
+            'entropy_threshold': 4.0,
+            'min_value_length': 10,
+            'skip_dirs': ['vendor'],
+            'skip_files': ['generated.py'],
+            'extra_extensions': ['.dockerfile'],
+            'extra_safe_values': ['sample'],
+            'replacement': 'GONE',
+            'ingest': {'from_gitleaks': 'r.json'},
+        })
+        assert not any('Unknown config key' in r.message
+                       for r in credactor_caplog.records)
 
     def test_merges_with_existing(self):
         c = Config(skip_dirs={'existing'})

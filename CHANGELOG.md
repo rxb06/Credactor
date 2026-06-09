@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Unknown top-level keys in `.credactor.toml` now log a warning instead of
+  being dropped silently. Malformed known keys already warned; a typo'd key
+  (e.g. `entropy_treshold`) was the one config mistake with no signal — for a
+  security tool that can mean scanning at the wrong sensitivity unnoticed.
+
 ### Fixed
 
+- `--staged` now runs the same full scan as a working-tree scan. The staged
+  path previously used a reduced per-line loop that skipped the PEM-block and
+  multi-line passes, so a secret inside a triple-quoted / template-literal
+  string passed the pre-commit gate undetected. Both paths now share
+  `scanner.scan_lines()`, so they cannot drift apart again.
+- Interactive review's Ctrl-C message counted replacements but labelled them
+  "file(s)"; it now says "replacement(s)".
 - `--scan-history` is now read-only (forces dry-run, like `--staged`). It
   previously flowed into interactive/`--fix-all` redaction that failed on every
   finding: history findings carry a synthetic `file (commit abc123)` path that

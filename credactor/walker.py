@@ -19,7 +19,7 @@ from ._log import logger
 from .config import Config
 from .gitignore import matches_gitignore, parse_gitignore_file
 from .patterns import SKIP_DIRS, SKIP_FILES
-from .scanner import scan_file, scan_line, should_scan_file
+from .scanner import scan_file, scan_line, scan_lines, should_scan_file
 from .suppressions import AllowList
 from .types import Finding
 from .utils import is_within_root, log_verbose, relativize, sanitize_for_terminal
@@ -324,10 +324,6 @@ def scan_staged_files(
 
         # Scan the STAGED index blob, not the working-tree file: the two can
         # differ, and a pre-commit gate must see exactly what is being committed.
-        # Per-line scan mirrors scan_git_history; scan_file's multi-line passes
-        # (PEM blocks, and secrets spanning triple-quoted / template-literal
-        # strings) are NOT applied here. A PEM header line is still caught by
-        # scan_line, but a secret split across physical lines is not.
         try:
             blob = subprocess.run(
                 ['git', 'show', f':{line}'],
@@ -343,10 +339,13 @@ def scan_staged_files(
             errored.append(full_path)
             continue
 
+        # scan_lines runs the same full pass as scan_file (PEM blocks, per-line,
+        # multi-line strings), so staged content gets identical coverage to a
+        # working-tree scan. keepends=True: the multi-line pass joins the lines
+        # back and needs the terminators for correct line numbering.
         content = blob.stdout.decode('utf-8', errors='surrogateescape')
-        for lineno, src in enumerate(content.splitlines(), start=1):
-            findings.extend(
-                scan_line(lineno, src, full_path, config=config, allowlist=allowlist))
+        findings.extend(scan_lines(full_path, content.splitlines(keepends=True),
+                                   config=config, allowlist=allowlist))
 
     return findings, errored
 
