@@ -281,6 +281,49 @@ class TestStagedScanning:
         assert len(findings) >= 1
         assert errored == []
 
+    def _stage_json_secret(self, repo, name='credentials.json'):
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        with open(os.path.join(repo, name), 'w') as f:
+            f.write(f'{{"aws_key": "{key}"}}\n')
+        subprocess.run(['git', 'add', '-A'], cwd=repo, check=True,
+                       capture_output=True)
+        return key
+
+    def test_staged_json_scanned_with_scan_json(self, tmp_dir):
+        # A staged .json secret must be caught when --scan-json is set — the
+        # staged path previously never consulted config.scan_json at all.
+        repo = self._init_repo(tmp_dir)
+        key = self._stage_json_secret(repo)
+        findings, errored = scan_staged_files(
+            repo, config=Config(scan_json=True, no_color=True))
+        assert any(key == f['full_value'] for f in findings), findings
+        assert errored == []
+
+    def test_staged_json_skipped_with_warning_without_scan_json(
+            self, tmp_dir, credactor_caplog):
+        # Without --scan-json the .json file is skipped, but never silently:
+        # the pre-commit gate must not give a false all-clear with no signal.
+        repo = self._init_repo(tmp_dir)
+        self._stage_json_secret(repo)
+        findings, errored = scan_staged_files(repo, config=Config(no_color=True))
+        assert findings == []
+        assert errored == []
+        # the warning must NAME the skipped file, not just announce a skip
+        assert any('Staged .json file skipped' in r.message
+                   and 'credentials.json' in r.message
+                   for r in credactor_caplog.records)
+
+    def test_staged_json_lockfile_stays_excluded(self, tmp_dir, credactor_caplog):
+        # SKIP_FILES lockfiles are excluded with and without --scan-json, and
+        # never trigger the skip warning (matching the directory walk).
+        repo = self._init_repo(tmp_dir)
+        self._stage_json_secret(repo, name='package-lock.json')
+        for cfg in (Config(scan_json=True, no_color=True), Config(no_color=True)):
+            findings, _errored = scan_staged_files(repo, config=cfg)
+            assert findings == []
+        assert not any('Staged .json file skipped' in r.message
+                       for r in credactor_caplog.records)
+
 
 class TestParallelScanEmfileRecovery:
     """#17: EMFILE recovery retries ONLY fd-exhausted files and logs retry failures.

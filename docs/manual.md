@@ -37,7 +37,7 @@ credactor path/to/file.py   # scan one file
 | `--fix-all` | mode | Batch-redact all findings after one confirmation |
 | `--yes`, `-y` | mode | Skip the `--fix-all` confirmation (required non-interactively) |
 | `--staged` | mode | Scan only git-staged files; **read-only (forces dry-run)** |
-| `--scan-history` | mode | Scan up to 100 commits of git history |
+| `--scan-history` | mode | Scan up to 100 commits of git history; **read-only (forces dry-run)** |
 | `--format`, `-f` | output | `text` (default) \| `json` \| `sarif` |
 | `--no-color` | output | Strip ANSI colour from text output |
 | `--replace-with` | replace | `sentinel` (default) \| `env` \| `custom` |
@@ -165,6 +165,8 @@ blob**. **Read-only: it forces dry-run even with `--fix-all`** (a pre-commit hoo
 must never rewrite the tree mid-commit). Verified: `--staged --fix-all --yes` on a
 staged secret exits **1** and leaves the working file **unmodified**. In a
 non-git directory it exits **2** (see below).
+Staged `.json` files follow the same opt-in as the directory walk: scanned only
+with `--scan-json`, otherwise skipped with a warning naming the file.
 
 ```bash
 credactor --staged --ci          # canonical pre-commit gate
@@ -175,6 +177,10 @@ credactor --staged --ci          # canonical pre-commit gate
 Scans up to 100 commits of `git log -p`, reporting the commit hash where each
 secret was introduced. Verified: finds a secret that was committed then removed
 from the working tree. In a non-git directory it exits **2**.
+**Read-only: it forces dry-run even with `--fix-all`** — history findings
+reference committed content, not files on disk, so they cannot be redacted in
+place. To purge a committed secret, rewrite history (e.g. `git filter-repo`)
+and rotate the key.
 
 ```bash
 credactor --scan-history .
@@ -503,7 +509,7 @@ Verified across the scenarios above:
 | Code | Meaning |
 |------|---------|
 | `0` | No findings, or all resolved/redacted |
-| `1` | Unresolved findings detected (incl. `--dry-run`/`--ci`/`--staged` with findings) |
+| `1` | Unresolved findings detected (incl. `--dry-run`/`--ci`/`--staged`/`--scan-history` with findings) |
 | `2` | Error: path not found; system/home/protected directory; dangerous `--replacement`; `--ci --fix-all`; `--scan-history` + ingestion; ingestion with a file target; `--staged`/`--scan-history` outside a git repo; `--fail-on-error` with unreadable files |
 
 ---
@@ -518,6 +524,7 @@ Verified rules:
 | `--ci --fix-all` | **rejected, exit 2** (CI is read-only) |
 | `--staged` (any) | forces dry-run; `--fix-all` is ignored (warned), file not modified |
 | `--staged --ci` | read-only gate over staged files |
+| `--scan-history` (any) | forces dry-run; `--fix-all` is ignored (warned) — history findings cannot be redacted in place |
 | `--replacement` (CLI) vs `.credactor.toml` `replacement` | **CLI wins** (CLI > config > default) |
 | `--replace-with custom` without `--replacement` | uses the default/config replacement |
 | `--scan-history` + `--from-gitleaks`/`--from-trufflehog` | **rejected, exit 2** |

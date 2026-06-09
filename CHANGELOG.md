@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--scan-history` is now read-only (forces dry-run, like `--staged`). It
+  previously flowed into interactive/`--fix-all` redaction that failed on every
+  finding: history findings carry a synthetic `file (commit abc123)` path that
+  does not exist on disk. The scan reports findings and exits 1; purging a
+  committed secret means rewriting history (e.g. `git filter-repo`) and
+  rotating the key. Passing `--fix-all` now warns and is ignored.
+- `--staged` now honours `--scan-json`: a staged `.json` file is scanned when
+  the flag is set, and skipped **with a warning naming the file** when it is
+  not. Previously staged `.json` files were skipped silently regardless of
+  `--scan-json`, so a staged `credentials.json` with real secrets passed the
+  pre-commit gate with a false all-clear. Lockfiles (`package-lock.json`)
+  remain excluded either way, matching the directory walk.
+
 ### Changed
 
 - Docs: clarified that external-scanner ingestion currently supports Gitleaks

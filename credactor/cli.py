@@ -145,7 +145,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         '--scan-history', action='store_true',
         help='scan git commit history (up to 100 commits) for leaked credentials; '
-             'reports the commit hash where each secret was introduced',
+             'reports the commit hash where each secret was introduced; '
+             'read-only — committed secrets cannot be redacted in place',
     )
 
     # Output flags
@@ -333,6 +334,20 @@ def _validate_invocation(config: Config) -> None:
             logger.warning(
                 '--staged is read-only; ignoring --fix-all and scanning in '
                 'dry-run. Redact the working tree in a separate, unstaged run.',
+            )
+        config.dry_run = True
+
+    if config.scan_history:
+        # History findings reference committed content and carry a synthetic
+        # 'file (commit abc123)' path no write pass can open, so every
+        # interactive/--fix-all replacement would fail — force dry-run like
+        # --staged (M7). Removing a committed secret means rewriting history
+        # (git filter-repo / BFG) and rotating the key, not editing the tree.
+        if config.fix_all:
+            logger.warning(
+                '--scan-history is read-only; ignoring --fix-all and scanning '
+                'in dry-run. To purge committed secrets, rewrite history '
+                '(e.g. git filter-repo) and rotate the affected keys.',
             )
         config.dry_run = True
 

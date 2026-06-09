@@ -424,6 +424,24 @@ class TestStagedReadOnly:
                    for r in credactor_caplog.records)
 
 
+class TestScanHistoryReadOnly:
+    """--scan-history is read-only — history findings carry synthetic
+    'file (commit abc123)' paths no write pass can open, so dry-run is forced
+    and a redaction pass (which could only fail per finding) is never offered."""
+
+    def test_scan_history_forces_dry_run(self):
+        config = Config(scan_history=True, dry_run=False)
+        _validate_invocation(config)
+        assert config.dry_run is True
+
+    def test_scan_history_fix_all_warns_and_forces_dry_run(self, credactor_caplog):
+        config = Config(scan_history=True, fix_all=True, dry_run=False)
+        _validate_invocation(config)
+        assert config.dry_run is True
+        assert any('--scan-history is read-only' in r.message
+                   for r in credactor_caplog.records)
+
+
 class TestReplacementPrecedence:
     """M10: an explicit --replacement overrides a config-file 'replacement'
     (precedence CLI > config > default)."""

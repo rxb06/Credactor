@@ -303,7 +303,23 @@ def scan_staged_files(
             continue
         if not is_within_root(resolved, str(root_path) + os.sep):
             continue
-        if not should_scan_file(line, config.extra_extensions):
+        # .json gets the same opt-in the directory walk gives it: scanned only
+        # under --scan-json, otherwise skipped WITH a signal (a staged
+        # credentials.json silently passing the pre-commit gate is a false
+        # all-clear). Lockfiles (SKIP_FILES) stay excluded either way — checked
+        # here so an extra_extensions '.json' entry can't re-admit them through
+        # the should_scan_file fallback below.
+        name_lower = Path(line).name.lower()
+        if name_lower.endswith('.json'):
+            if name_lower in SKIP_FILES:
+                continue
+            if not config.scan_json:
+                logger.warning(
+                    'Staged .json file skipped — pass --scan-json to include '
+                    'it: %s', line,
+                )
+                continue
+        elif not should_scan_file(line, config.extra_extensions):
             continue
 
         # Scan the STAGED index blob, not the working-tree file: the two can
