@@ -357,31 +357,35 @@ def batch_replace_in_file(
                 lines[idx] = original.replace(full_value, replacement, 1)
             replaced += 1
 
-        # H10: the per-finding replace handles one occurrence each. If the same
-        # secret value also appears uncredited elsewhere on the line (a trailing
-        # comment, or a second non-credential variable), those copies would survive.
-        # Sweep every touched line and replace any remaining exact copy of a redacted
-        # value with the sentinel, so no secret literal is ever left behind.
+        # H10 + value-global sweep: the per-finding replace handles one
+        # occurrence each, but the same secret literal can survive on lines no
+        # finding cited — a trailing comment, a second non-credential variable,
+        # or (the common case) a detector that DEDUPLICATED repeated copies and
+        # reported the value only once even though it recurs on several lines.
+        # Sweep EVERY line of this already-rewritten file and replace any
+        # remaining exact copy of a redacted value, so no known secret literal
+        # is left behind in a file we are already modifying. Scope is bounded to
+        # this one file — other files are never opened by this sweep.
         if replaced:
             stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
                      else config.custom_replacement)
-            values_by_line: dict[int, set[str]] = {}
-            for finding in file_findings:
-                values_by_line.setdefault(finding['line'] - 1, set()).add(finding['full_value'])
-            for idx, values in values_by_line.items():
-                if idx >= len(lines):
-                    continue
-                # One compiled alternation per line (longest value first so a short
-                # value can't shadow a longer one). Word-boundary anchors keep us from
+            values = {f['full_value'] for f in file_findings if f['full_value']}
+            if values:
+                # One compiled alternation (longest value first so a short value
+                # can't shadow a longer one). Word-boundary anchors keep us from
                 # corrupting a substring of a larger token like 123456789. The
-                # replacement is a function so a custom string with backreference-like
-                # text (e.g. '\1') is inserted literally, not as a regex template.
+                # replacement is a function so a custom string with
+                # backreference-like text (e.g. '\1') is inserted literally, not
+                # as a regex template. On the finding's own line the literal is
+                # already gone (replaced above), so re.sub is a no-op there;
+                # duplicate copies on other lines are what this catches.
                 pat = re.compile(
                     r'(?<!\w)(?:'
                     + '|'.join(re.escape(v) for v in sorted(values, key=len, reverse=True))
                     + r')(?!\w)'
                 )
-                lines[idx] = pat.sub(lambda _m: stray, lines[idx])
+                for idx in range(len(lines)):
+                    lines[idx] = pat.sub(lambda _m: stray, lines[idx])
 
         # Atomic write: write to temp file, then rename over original.
         # Prevents corruption if process crashes mid-write.

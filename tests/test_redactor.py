@@ -250,6 +250,35 @@ class TestNoLeakOnRepeatedValue:
         assert 'os.environ["API_KEY"]' in out   # primary kept the env ref
         compile(out, 'dupe.py', 'exec')
 
+    def test_duplicate_value_on_other_lines_swept(self, make_file):
+        # The detector-dedup case (benchmark): a secret reported once but present
+        # verbatim on lines NO finding cited. The single finding must clear every
+        # copy in this file in one pass, not just its own line.
+        config = Config(no_backup=True, replace_mode='sentinel')
+        path = make_file(
+            'dups.env',
+            f'TOKEN={self._SECRET}\n'      # the reported finding (line 1)
+            f'COPY_A={self._SECRET}\n'     # un-reported duplicate (line 2)
+            f'COPY_B={self._SECRET}\n')    # un-reported duplicate (line 3)
+        # only one finding, on line 1
+        batch_replace_in_file(path, [_mk_finding(path, self._SECRET, line=1)], config)
+        with open(path) as f:
+            out = f.read()
+        assert self._SECRET not in out               # no copy survives
+        assert out.count('REDACTED_BY_CREDACTOR') == 3
+
+    def test_sweep_stays_within_the_redacted_file(self, make_file):
+        # The sweep is bounded to the file being rewritten; a verbatim copy of
+        # the same secret in a DIFFERENT, un-scanned file is left alone.
+        config = Config(no_backup=True, replace_mode='sentinel')
+        target = make_file('a.py', f'api_key = "{self._SECRET}"\n')
+        other = make_file('b.py', f'api_key = "{self._SECRET}"\n')
+        batch_replace_in_file(target, [_mk_finding(target, self._SECRET)], config)
+        with open(target) as f:
+            assert self._SECRET not in f.read()
+        with open(other) as f:
+            assert self._SECRET in f.read()          # untouched — different file
+
     def test_sweep_skips_substring_of_larger_token(self, make_file):
         # the secret value is also a substring of an adjacent numeric literal —
         # the sweep must redact the credential but NOT corrupt the other token
