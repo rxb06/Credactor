@@ -22,6 +22,9 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      # Don't cancel sibling legs on first failure: while the Windows leg is
+      # young, seeing every leg's result per push beats saving runner minutes.
+      fail-fast: false
       matrix:
         # windows-latest: the package has deliberate Windows code paths
         # (drive-root guard, fcntl fallback, path-case handling) that were

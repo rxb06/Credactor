@@ -2,6 +2,12 @@
 # Regenerate: pip-compile --generate-hashes --allow-unsafe --output-file=requirements-ci.txt requirements-ci.in
 # Project requires Python >=3.11; tomllib/ExceptionGroup are stdlib on supported versions.
 build
+# Windows-only transitive dep of build (os_name == "nt") and pytest
+# (sys_platform == "win32"). pip-compile evaluates markers for the platform it
+# runs on (POSIX), so without this direct pin the hash-locked file lacks
+# colorama and `pip install --require-hashes` fails on the windows-latest CI
+# leg before tests even start. Pure-Python and tiny; harmless on Linux.
+colorama>=0.4
 # The build backend itself: workflows run `python -m build --no-isolation` so
 # the one package that writes every byte of the published wheel is covered by
 # the same hash pinning as everything else (an isolated build would download
