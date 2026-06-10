@@ -98,6 +98,10 @@ python_version = "3.11"
 platform = "linux"
 files = ["credactor", "scripts"]
 strict = true
-# For the optional encoding detectors (resolved once at credactor.utils import):
-# chardet has no stubs and is absent from the dev/CI environments.
+# Scope the missing-import exemption to the two optional encoding detectors
+# (resolved once at credactor.utils import; chardet has no stubs and is absent
+# from dev/CI) — a blanket ignore_missing_imports would silently treat any
+# accidental new import as untyped.
+[[tool.mypy.overrides]]
+module = ["charset_normalizer", "charset_normalizer.*", "chardet", "chardet.*"]
 ignore_missing_imports = true

@@ -232,6 +232,28 @@ class TestStagedScanning:
         assert any(key in f.get('full_value', '') or 'AWS' in f.get('type', '')
                    for f in findings), findings
 
+    def test_scan_history_line_and_commit_fields(self, tmp_dir):
+        # The hand-parsed `git log -p` hunk headers must yield the real line
+        # number, and each finding must carry the introducing commit's hash —
+        # previously only "some finding exists" was asserted.
+        repo = self._init_repo(tmp_dir)
+        env = dict(check=True, capture_output=True, cwd=repo)
+        subprocess.run(['git', 'config', 'user.email', 't@t'], **env)
+        subprocess.run(['git', 'config', 'user.name', 't'], **env)
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        with open(os.path.join(repo, 'app.py'), 'w') as f:
+            f.write(f'import os\nx = 1\naws = "{key}"\n')   # secret on line 3
+        subprocess.run(['git', 'add', '-A'], **env)
+        subprocess.run(['git', 'commit', '-m', 'x'], **env)
+        head = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], check=True, capture_output=True,
+            text=True, cwd=repo).stdout.strip()
+        findings = scan_git_history(repo, config=Config(no_color=True))
+        hits = [f for f in findings if f['full_value'] == key]
+        assert hits, findings
+        assert hits[0]['line'] == 3
+        assert hits[0]['commit'] == head[:12]
+
     def test_ignores_unstaged_worktree_secret(self, tmp_dir):
         repo = self._init_repo(tmp_dir)
         path = os.path.join(repo, 'app.py')

@@ -27,7 +27,13 @@ mypy credactor/ scripts/
 ```
 
 CI runs exactly these three checks (`make lint` covers the last two) — a type
-error fails the build, so run mypy locally before pushing.
+error fails the build, so run mypy locally before pushing. To run the lint,
+type-check, and self-scan automatically on every commit (the hooks use the
+project venv's own tools, so commit with the venv active):
+
+```bash
+pip install pre-commit && pre-commit install
+```
 
 ## Build and Audit
 

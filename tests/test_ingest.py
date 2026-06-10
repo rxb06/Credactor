@@ -175,13 +175,17 @@ class TestGitleaksInputValidation:
         with pytest.raises(ValueError, match='not valid JSON'):
             ingest_gitleaks(str(report), str(target))
 
-    def test_gitleaks_oversized_file_rejected(self, tmp_path):
-        """Report file exceeding _MAX_REPORT_BYTES raises ValueError before json.load()."""
-        from credactor.ingest import _MAX_REPORT_BYTES
+    def test_gitleaks_oversized_file_rejected(self, tmp_path, monkeypatch):
+        """Report file exceeding _MAX_REPORT_BYTES raises ValueError before json.load().
+
+        The limit is monkeypatched down so the boundary is tested without
+        writing a real 100 MB file (same size-comparison semantics).
+        """
+        monkeypatch.setattr('credactor.ingest._MAX_REPORT_BYTES', 4096)
         target, _ = _make_target(tmp_path)
         report = tmp_path / 'huge.json'
         # Write a file exactly one byte over the limit.
-        report.write_bytes(b'x' * (_MAX_REPORT_BYTES + 1))
+        report.write_bytes(b'x' * 4097)
         with pytest.raises(ValueError, match='refusing to parse'):
             ingest_gitleaks(str(report), str(target))
 
@@ -1047,30 +1051,36 @@ class TestSeverityMappingCompleteness:
 class TestA1TrufflehogFileSizeGuard:
     """A1: TruffleHog NDJSON must be rejected before open() if over _MAX_REPORT_BYTES."""
 
-    def test_trufflehog_rejects_oversized_file(self, tmp_path):
-        """A file larger than _MAX_REPORT_BYTES raises ValueError before parsing."""
-        from credactor.ingest import _MAX_REPORT_BYTES
+    def test_trufflehog_rejects_oversized_file(self, tmp_path, monkeypatch):
+        """A file larger than _MAX_REPORT_BYTES raises ValueError before parsing.
+
+        Limit monkeypatched down: same boundary semantics, no sparse-file
+        reliance (sparse seeks are not sparse on every filesystem).
+        """
+        monkeypatch.setattr('credactor.ingest._MAX_REPORT_BYTES', 4096)
         target, _ = _make_th_target(tmp_path)
         report = tmp_path / 'huge.json'
-        # Write a file that is just over the limit (write sparse via seek)
-        with report.open('wb') as fh:
-            fh.seek(_MAX_REPORT_BYTES)
-            fh.write(b'\n')
+        report.write_bytes(b'\n' * 4097)
         with pytest.raises(ValueError, match='refusing to parse'):
             ingest_trufflehog(str(report), str(target))
 
-    def test_trufflehog_accepts_file_at_limit(self, tmp_path):
-        """A file exactly at _MAX_REPORT_BYTES is accepted (boundary condition)."""
-        from credactor.ingest import _MAX_REPORT_BYTES
+    def test_trufflehog_accepts_file_at_limit(self, tmp_path, monkeypatch):
+        """A file exactly at _MAX_REPORT_BYTES is accepted (boundary condition).
+
+        Limit monkeypatched to 4096: identical size == limit comparison
+        without writing a real 100 MB file (this single test used to be 56%
+        of total suite runtime).
+        """
+        monkeypatch.setattr('credactor.ingest._MAX_REPORT_BYTES', 4096)
         target, _ = _make_th_target(tmp_path)
         # A valid NDJSON that happens to be padded to exactly the limit
         finding = _make_trufflehog_finding()
         line = json.dumps(finding)
         report = tmp_path / 'exact.json'
         # Pad with blank lines to reach the limit (blank lines are skipped by parser)
-        padding = b'\n' * (_MAX_REPORT_BYTES - len(line.encode()) - 1)
+        padding = b'\n' * (4096 - len(line.encode()) - 1)
         report.write_bytes(line.encode() + b'\n' + padding)
-        assert report.stat().st_size == _MAX_REPORT_BYTES
+        assert report.stat().st_size == 4096
         results = ingest_trufflehog(str(report), str(target))
         assert len(results) == 1
 
@@ -1080,14 +1090,12 @@ class TestA1TrufflehogFileSizeGuard:
         with pytest.raises(ValueError, match='Cannot open TruffleHog file'):
             ingest_trufflehog(str(tmp_path / 'nonexistent.json'), str(target))
 
-    def test_gitleaks_already_has_size_guard(self, tmp_path):
+    def test_gitleaks_already_has_size_guard(self, tmp_path, monkeypatch):
         """Confirm Gitleaks also rejects oversized files (pre-existing guard)."""
-        from credactor.ingest import _MAX_REPORT_BYTES
+        monkeypatch.setattr('credactor.ingest._MAX_REPORT_BYTES', 4096)
         target, _ = _make_target(tmp_path)
         report = tmp_path / 'huge_gl.json'
-        with report.open('wb') as fh:
-            fh.seek(_MAX_REPORT_BYTES)
-            fh.write(b'\n')
+        report.write_bytes(b'\n' * 4097)
         with pytest.raises(ValueError, match='refusing to parse'):
             ingest_gitleaks(str(report), str(target))
 

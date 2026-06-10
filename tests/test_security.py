@@ -56,6 +56,24 @@ class TestSymlinkBoundary:
 
     @pytest.mark.skipif(sys.platform == 'win32',
                         reason='Symlinks require admin on Windows')
+    def test_scan_root_via_symlinked_alias(self, tmp_path):
+        """A scan root reached THROUGH a symlink (macOS /var -> /private/var
+        style) must still scan its files. The tmp_dir fixture used to hand
+        tests such symlinked paths incidentally (tempfile's /var/...); pytest's
+        tmp_path is pre-resolved, so this coverage is pinned deliberately."""
+        from credactor.walker import walk_and_scan
+        real = tmp_path / 'real'
+        real.mkdir()
+        # credactor:ignore
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        (real / 'app.py').write_text(f'aws = "{key}"\n', encoding='utf-8')
+        alias = tmp_path / 'alias'
+        os.symlink(real, alias)
+        findings, _, _, _ = walk_and_scan(str(alias), config=Config(no_color=True))
+        assert any(f['full_value'] == key for f in findings), findings
+
+    @pytest.mark.skipif(sys.platform == 'win32',
+                        reason='Symlinks require admin on Windows')
     def test_external_symlink_skipped(self, tmp_dir):
         """A symlink pointing outside the scan root must not be scanned."""
         # Create an external file with a credential

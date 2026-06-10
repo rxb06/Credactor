@@ -646,6 +646,45 @@ class TestJsonSkippedNotice:
         assert '.json file(s) present but not scanned' in err
 
 
+class TestExitCodeEdgeBranches:
+    """Three small exit paths that had no coverage: a non-text format WITH
+    findings exits 1; Ctrl-C anywhere in main exits 130; declining the
+    --fix-all confirmation aborts with exit 1 and touches nothing."""
+
+    def _make_secret(self, tmp_dir):
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        path = os.path.join(tmp_dir, 'app.py')
+        with open(path, 'w') as f:
+            f.write(f'aws = "{key}"\n')
+        return path, key
+
+    def test_json_format_with_findings_exits_1(self, tmp_dir, capsys):
+        self._make_secret(tmp_dir)
+        with pytest.raises(SystemExit) as exc:
+            main(['--format', 'json', tmp_dir])
+        assert exc.value.code == 1
+        assert '"count": 1' in capsys.readouterr().out
+
+    def test_keyboard_interrupt_exits_130(self, monkeypatch, capsys):
+        def boom(argv=None):
+            raise KeyboardInterrupt
+        monkeypatch.setattr('credactor.cli._main_inner', boom)
+        with pytest.raises(SystemExit) as exc:
+            main([])
+        assert exc.value.code == 130
+        assert 'Interrupted' in capsys.readouterr().err
+
+    def test_fix_all_decline_aborts_exit_1(self, tmp_dir, monkeypatch, capsys):
+        path, key = self._make_secret(tmp_dir)
+        monkeypatch.setattr('builtins.input', lambda *a: 'n')
+        with pytest.raises(SystemExit) as exc:
+            main(['--fix-all', tmp_dir])
+        assert exc.value.code == 1
+        assert 'Aborted' in capsys.readouterr().out
+        with open(path) as f:
+            assert key in f.read()       # nothing was redacted
+
+
 class TestScanJsonEndToEnd:
     """S33: --scan-json detection end-to-end — a secret whose only home is a
     .json file flips the exit code only when the flag is passed (the flag's

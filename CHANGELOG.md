@@ -29,6 +29,13 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 - `scripts/` is now covered by ruff and mypy strict in CI and `make lint`
   (the release-gating audit script was held to a lower bar than the package
   and had accumulated two lint errors and missing annotations, now fixed).
+- A `.github/dependabot.yml` (monthly, github-actions + pip): the SHA-pinned
+  actions and hash-pinned CI dependencies previously had nothing proposing
+  updates — frozen-but-never-refreshed pins eventually mean running CI on
+  tooling with known fixed bugs.
+- A `.pre-commit-config.yaml` for this repo's own developers: ruff, mypy
+  strict, and the credactor self-scan run at commit time via the dev
+  environment's tools (`pre-commit install` once; CONTRIBUTING documents it).
 - PyPI sidebar links: `[project.urls]` now declares Issues, Changelog, and
   Documentation alongside Repository.
 - The wheel audit gate (`scripts/audit_wheel.py`) now also fails when `dist/`
