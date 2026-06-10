@@ -6,7 +6,12 @@ import sys
 import pytest
 
 from credactor.config import Config
-from credactor.redactor import _derive_env_var_name, batch_replace_in_file, fix_all
+from credactor.redactor import (
+    _derive_env_var_name,
+    batch_replace_in_file,
+    fix_all,
+    interactive_review,
+)
 
 # Construct test credentials via concatenation so the tool doesn't self-redact
 _AWS_KEY = 'AKIA' + 'IOSFODNN7EXAMPLE'
@@ -436,3 +441,89 @@ class TestFixAllSummary:
         assert unresolved == 1
         assert '1 failed' in out
         assert 'skipped' not in out
+
+
+class TestInteractiveReview:
+    """S32: the default no-flags mode — per-finding y/N prompts driving real
+    file rewrites — was previously the tool's only completely untested core
+    path."""
+
+    def _cfg(self):
+        return Config(no_backup=True, no_color=True)
+
+    def test_yes_replaces_and_returns_zero_unresolved(
+            self, make_file, monkeypatch):
+        path = make_file('app.py', f'api_key = "{_AWS_KEY}"\n')
+        monkeypatch.setattr('builtins.input', lambda *a: 'y')
+        unresolved = interactive_review(
+            [_mk_finding(path, _AWS_KEY)], os.path.dirname(path), self._cfg())
+        assert unresolved == 0
+        with open(path) as f:
+            content = f.read()
+        assert _AWS_KEY not in content
+        assert 'REDACTED_BY_CREDACTOR' in content
+
+    def test_no_and_enter_skip_file_untouched(self, make_file, monkeypatch):
+        path = make_file('app.py', f'api_key = "{_AWS_KEY}"\n'
+                                   f'db_password = "{_PASSWORD}"\n')
+        with open(path, 'rb') as f:
+            before = f.read()
+        answers = iter(['n', ''])           # explicit no, then bare Enter
+        monkeypatch.setattr('builtins.input', lambda *a: next(answers))
+        findings = [_mk_finding(path, _AWS_KEY),
+                    _mk_finding(path, _PASSWORD, line=2)]
+        unresolved = interactive_review(findings, os.path.dirname(path), self._cfg())
+        assert unresolved == 2
+        with open(path, 'rb') as f:
+            assert f.read() == before        # byte-identical: nothing written
+
+    def test_interrupt_stops_cleanly_and_reports(
+            self, make_file, monkeypatch, capsys):
+        # A skip BEFORE the interrupt pins the accounting: unresolved must be
+        # total - replaced (the 'n' answer stays unresolved, not dropped).
+        p1 = make_file('a.py', f'api_key = "{_AWS_KEY}"\n')
+        p2 = make_file('b.py', f'api_key = "{_AWS_KEY}"\n')
+        p3 = make_file('c.py', f'api_key = "{_AWS_KEY}"\n')
+        answers = iter(['n', 'y', KeyboardInterrupt])
+
+        def fake_input(*a):
+            v = next(answers)
+            if v is KeyboardInterrupt:
+                raise KeyboardInterrupt
+            return v
+
+        monkeypatch.setattr('builtins.input', fake_input)
+        unresolved = interactive_review(
+            [_mk_finding(p1, _AWS_KEY), _mk_finding(p2, _AWS_KEY),
+             _mk_finding(p3, _AWS_KEY)],
+            os.path.dirname(p1), self._cfg())
+        assert unresolved == 2               # 3 total - 1 replaced
+        with open(p1) as f:
+            assert _AWS_KEY in f.read()      # 'n': skipped, untouched
+        with open(p2) as f:
+            assert _AWS_KEY not in f.read()  # 'y': applied before ^C
+        with open(p3) as f:
+            assert _AWS_KEY in f.read()      # interrupted finding untouched
+        out = capsys.readouterr().out
+        assert 'Interrupted' in out
+        assert 'replacement(s) already applied' in out
+
+    def test_invalid_answer_reprompts(self, make_file, monkeypatch, capsys):
+        path = make_file('app.py', f'api_key = "{_AWS_KEY}"\n')
+        answers = iter(['x', 'y'])
+        monkeypatch.setattr('builtins.input', lambda *a: next(answers))
+        unresolved = interactive_review(
+            [_mk_finding(path, _AWS_KEY)], os.path.dirname(path), self._cfg())
+        assert unresolved == 0
+        assert "Please enter 'y' or 'n'." in capsys.readouterr().out
+
+    def test_failed_replacement_counts_as_unresolved(
+            self, make_file, monkeypatch, capsys):
+        # full_value not on the line -> replace_single fails -> stays unresolved.
+        path = make_file('app.py', f'api_key = "{_AWS_KEY}"\n')
+        stale = _mk_finding(path, 'VALUE_NOT_ON_THIS_LINE')
+        monkeypatch.setattr('builtins.input', lambda *a: 'y')
+        unresolved = interactive_review(
+            [stale], os.path.dirname(path), self._cfg())
+        assert unresolved == 1
+        assert 'Replacement failed' in capsys.readouterr().out

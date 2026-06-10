@@ -36,6 +36,11 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
   false "Wheel audit passed"), and checks the **reverse direction** — a
   tracked source file missing from the wheel is now an error, matching the
   script's "match exactly" contract.
+- Test coverage for the three remaining untested core paths: the default
+  interactive redaction flow (y/n/Enter, invalid-answer re-prompt, Ctrl-C
+  mid-review, failed-replacement accounting), `--scan-json` end-to-end
+  detection (exit 1 with the flag, 0 without), and the non-UTF-8 (latin-1)
+  redaction round-trip (secret removed, every other byte preserved).
 - Unknown top-level keys in `.credactor.toml` now log a warning instead of
   being dropped silently. Malformed known keys already warned; a typo'd key
   (e.g. `entropy_treshold`) was the one config mistake with no signal — for a

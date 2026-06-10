@@ -620,3 +620,26 @@ class TestJsonSkippedNotice:
             main(['--dry-run', tmp_dir])
         err = capsys.readouterr().err
         assert '.json file(s) present but not scanned' in err
+
+
+class TestScanJsonEndToEnd:
+    """S33: --scan-json detection end-to-end — a secret whose only home is a
+    .json file flips the exit code only when the flag is passed (the flag's
+    actual scanning branch was previously untested; only the skip notice was)."""
+
+    def _make_json_secret(self, tmp_dir):
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        with open(os.path.join(tmp_dir, 'cfg.json'), 'w') as f:
+            f.write(f'{{"aws_key": "{key}"}}\n')
+
+    def test_json_secret_found_with_flag(self, tmp_dir):
+        self._make_json_secret(tmp_dir)
+        with pytest.raises(SystemExit) as exc:
+            main(['--dry-run', '--scan-json', tmp_dir])
+        assert exc.value.code == 1
+
+    def test_json_secret_missed_without_flag(self, tmp_dir):
+        self._make_json_secret(tmp_dir)
+        with pytest.raises(SystemExit) as exc:
+            main(['--dry-run', tmp_dir])
+        assert exc.value.code == 0

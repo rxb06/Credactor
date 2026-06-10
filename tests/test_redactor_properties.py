@@ -157,3 +157,25 @@ def test_env_mode_output_is_valid_python(tmp_path):
         tmp_path, 'app.py', f'api_key = "{s}"\n', mode='env')
     assert replaced == 1
     compile(p.read_text(encoding='utf-8'), 'app.py', 'exec')  # H2: valid syntax
+
+
+def test_latin1_bytes_roundtrip(tmp_path):
+    """S34: non-UTF-8 (latin-1) file — redaction removes the secret and the
+    file matches the expected redacted bytes EXACTLY, pinning reader/writer
+    codec consistency: a writer that fell back to a different encoding than
+    the reader would corrupt the accented bytes on legacy codebases."""
+    s = _secret()
+    p = tmp_path / 'legacy.py'
+    p.write_bytes(f'# café résumé\napi_key = "{s}"\n'.encode('latin-1'))
+    cfg = Config(no_color=True, no_backup=True)
+    findings = scan_file(str(p), config=cfg)
+    assert findings, 'precondition: the secret must be detected in a latin-1 file'
+    replaced, failed = batch_replace_in_file(str(p), findings, cfg)
+    assert replaced >= 1
+    assert failed == 0
+    # Full-file equality: deterministic under ANY single-byte codec the
+    # detector reports, since unchanged bytes round-trip identically and the
+    # replaced line is pure ASCII.
+    expected = ('# café résumé\n'.encode('latin-1')
+                + b'api_key = "REDACTED_BY_CREDACTOR"\n')
+    assert p.read_bytes() == expected
