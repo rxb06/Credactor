@@ -7,7 +7,15 @@ Thanks for your interest in Credactor. Bug reports, feature requests, and pull r
 ```bash
 git clone https://github.com/rxb06/Credactor.git
 cd Credactor
-pip install -e ".[dev]"
+pip install -e ".[dev,encoding]"
+```
+
+The `dev` extra installs the *latest* tool releases. CI runs exact
+hash-pinned versions instead — to reproduce CI's toolchain locally
+(same ruff/mypy/pytest), use:
+
+```bash
+pip install --require-hashes -r requirements-ci.txt
 ```
 
 ## Running Tests

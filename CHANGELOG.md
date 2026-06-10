@@ -87,6 +87,10 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
   requirement is dropped (setuptools >=70.1 builds wheels itself).
 - `SECURITY.md`'s Supported Versions table now lists 2.4.x — it still said
   2.3.x, leaving the shipped release outside its own support policy.
+- The pre-commit hook manifest declares `minimum_pre_commit_version: 3.2.0`:
+  it uses the post-3.2 `stages: [pre-commit]` spelling, and older pre-commit
+  versions failed manifest validation with a cryptic error instead of a
+  clear version requirement.
 
 ### Changed
 
@@ -350,6 +354,13 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 - Parallel file scanning via `ThreadPoolExecutor`.
 - Git staged file and history scanning.
 - Pre-commit hook support (beta).
+
+---
+
+**Pre-2.2.0 uploads:** PyPI also hosts 2.0.0, 2.0.1, and 2.1.1 — unsupported
+early builds that predate the SEC-01…SEC-22 hardening and the wheel-audit
+publish gate, documented nowhere in this changelog. Do not install them; pin
+`credactor>=2.2.0` if your resolver might otherwise consider them.
 
 [Unreleased]: https://github.com/rxb06/Credactor/compare/v2.4.0...HEAD
 [2.4.0]: https://github.com/rxb06/Credactor/compare/v2.3.3...v2.4.0
