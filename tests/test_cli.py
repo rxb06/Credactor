@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -187,7 +188,9 @@ class TestConfigFileIngestCLI:
             json.dump([finding], f)
         with open(os.path.join(repo, '.credactor.toml'), 'w') as f:
             f.write('[ingest]\n')
-            f.write(f'from_gitleaks = "{report}"\n')
+            # as_posix(): a Windows path's backslashes are escape sequences inside a
+            # double-quoted TOML string (tomllib parse error -> config ignored).
+            f.write(f'from_gitleaks = "{Path(report).as_posix()}"\n')
         with pytest.raises(SystemExit) as exc_info:
             main(['--dry-run', repo])
         assert exc_info.value.code == 1
@@ -206,7 +209,7 @@ class TestConfigFileIngestCLI:
             f.write(json.dumps(finding) + '\n')
         with open(os.path.join(repo, '.credactor.toml'), 'w') as f:
             f.write('[ingest]\n')
-            f.write(f'from_trufflehog = "{report}"\n')
+            f.write(f'from_trufflehog = "{Path(report).as_posix()}"\n')
         with pytest.raises(SystemExit) as exc_info:
             main(['--dry-run', repo])
         assert exc_info.value.code == 1
@@ -221,7 +224,9 @@ class TestConfigFileIngestCLI:
             json.dump([], f)
         with open(os.path.join(repo, '.credactor.toml'), 'w') as f:
             f.write('[ingest]\n')
-            f.write(f'from_gitleaks = "{report}"\n')
+            # as_posix(): a Windows path's backslashes are escape sequences inside a
+            # double-quoted TOML string (tomllib parse error -> config ignored).
+            f.write(f'from_gitleaks = "{Path(report).as_posix()}"\n')
         with pytest.raises(SystemExit) as exc_info:
             main(['--scan-history', repo])
         assert exc_info.value.code == 2

@@ -36,7 +36,11 @@ def _secret() -> str:
 def _redact(tmp_path, name: str, content: str, *, mode: str = 'sentinel',
             custom: str = 'REDACTED_BY_CREDACTOR'):
     p = tmp_path / name
-    p.write_text(content, encoding='utf-8')
+    # newline='': write the content bytes EXACTLY as given. Text mode would
+    # translate \n -> \r\n on Windows, and the byte-level invariants here
+    # (no_collateral_edits) would then fail against the LF expectations even
+    # though the redactor correctly preserved the file's own endings.
+    p.write_text(content, encoding='utf-8', newline='')
     cfg = Config(replace_mode=mode, custom_replacement=custom, no_color=True)
     findings = scan_file(str(p), config=cfg)
     replaced, failed = batch_replace_in_file(str(p), findings, cfg)
