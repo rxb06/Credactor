@@ -294,7 +294,12 @@ def scan_staged_files(
         # multi-line strings), so staged content gets identical coverage to a
         # working-tree scan. keepends=True: the multi-line pass joins the lines
         # back and needs the terminators for correct line numbering.
+        # Universal-newline normalization mirrors how open() reads the file
+        # path: without it, CRLF blobs leak literal \r into multiline raw
+        # previews and lone-\r endings break the multiline pass's \n-based
+        # line numbering.
         content = blob.stdout.decode('utf-8', errors='surrogateescape')
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
         findings.extend(scan_lines(full_path, content.splitlines(keepends=True),
                                    config=config, allowlist=allowlist))
 

@@ -333,6 +333,25 @@ class TestStagedScanning:
                    and 'credentials.json' in r.message
                    for r in credactor_caplog.records)
 
+    def test_staged_crlf_blob_normalized(self, tmp_dir):
+        # Staged content is universal-newline normalized like the file path.
+        # The discriminating case is a MULTILINE finding: per-line raws were
+        # always rstrip()ed, but the multiline pass's block preview leaked
+        # literal \r from CRLF blobs before normalization.
+        repo = self._init_repo(tmp_dir)
+        subprocess.run(['git', 'config', 'core.autocrlf', 'false'],
+                       cwd=repo, check=True, capture_output=True)
+        secret = 'aB3dE5gH7jK9mN1pQ4sU6wX8zC2vF0yT5rL8nM3kP7qW1eR9tY4uI6oA2sD5fG8h'
+        with open(os.path.join(repo, 'note.py'), 'wb') as f:
+            f.write(f'doc = """\r\nembedded blob\r\n{secret}\r\n"""\r\n'.encode())
+        subprocess.run(['git', 'add', '-A'], cwd=repo, check=True,
+                       capture_output=True)
+        findings, errored = scan_staged_files(repo, config=Config(no_color=True))
+        multiline = [f for f in findings if f['type'].startswith('multiline:')]
+        assert any(f['full_value'] == secret for f in multiline), findings
+        assert all('\r' not in f['raw'] for f in findings)
+        assert errored == []
+
     def test_staged_multiline_secret_detected(self, tmp_dir):
         # The staged path reuses scan_lines(), so a secret inside a
         # triple-quoted block is caught. The old bare per-line loop missed it:

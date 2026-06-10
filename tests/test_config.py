@@ -311,6 +311,14 @@ class TestApplyConfigFile:
         assert c.from_gitleaks is None
         assert c.from_trufflehog is None
 
+    def test_unknown_ingest_keys_warn(self, credactor_caplog):
+        # Same typo guard as the top-level keys: a misspelled from_gitleaks
+        # means ingestion silently never runs.
+        c = Config()
+        apply_config_file(c, {'ingest': {'from_gitleeks': 'r.json'}})
+        assert any("ingest.from_gitleeks" in r.message
+                   for r in credactor_caplog.records)
+
     def test_apply_unknown_ingest_keys_ignored(self):
         c = Config()
         apply_config_file(c, {'ingest': {'unknown_key': 'x'}})

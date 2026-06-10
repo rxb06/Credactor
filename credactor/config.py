@@ -222,12 +222,19 @@ def _coerce_str_list(key: str, raw: object, *, lower: bool = False) -> list[str]
     return out
 
 
+_KNOWN_INGEST_KEYS = frozenset({'from_gitleaks', 'from_trufflehog'})
+
+
 def _apply_ingest_config(config: Config, file_data: TomlData) -> None:
     """Apply the optional ``[ingest]`` table (from_gitleaks / from_trufflehog)."""
     ingest = file_data.get('ingest', {})
     if not isinstance(ingest, dict):
         logger.warning('[ingest] config section must be a table, ignoring')
         return
+    # Same typo guard as the top-level keys: a misspelled from_gitleaks means
+    # ingestion silently never runs.
+    for key in sorted(ingest.keys() - _KNOWN_INGEST_KEYS):
+        logger.warning("Unknown config key 'ingest.%s' ignored — check for typos.", key)
     if 'from_gitleaks' in ingest:
         val = ingest['from_gitleaks']
         if not isinstance(val, str):

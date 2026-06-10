@@ -52,6 +52,8 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
   being dropped silently. Malformed known keys already warned; a typo'd key
   (e.g. `entropy_treshold`) was the one config mistake with no signal — for a
   security tool that can mean scanning at the wrong sensitivity unnoticed.
+  The same guard now covers the `[ingest]` table (a typo'd `from_gitleaks`
+  meant ingestion silently never ran).
 
 ### Fixed
 
@@ -80,6 +82,10 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
   `git show` then fails and a staged secret in such a file landed in the
   error list instead of being scanned. History-scan decoding additionally
   degrades stray non-UTF-8 bytes to U+FFFD instead of crashing.
+- Staged blob content is universal-newline normalized before scanning,
+  matching how the file path reads from disk: CRLF blobs no longer leak
+  literal `\r` into multiline findings' raw previews, and lone-`\r` line
+  endings no longer skew the multiline pass's line numbering.
 - README links now use absolute GitHub URLs. The README is the PyPI landing
   page, and its relative links (Docs table, Manual, CI guide, LICENSE)
   resolved against pypi.org and returned 404s on the live project page.
@@ -364,10 +370,12 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ---
 
-**Pre-2.2.0 uploads:** PyPI also hosts 2.0.0, 2.0.1, and 2.1.1 — unsupported
-early builds that predate the SEC-01…SEC-22 hardening and the wheel-audit
-publish gate, documented nowhere in this changelog. Do not install them; pin
-`credactor>=2.2.0` if your resolver might otherwise consider them.
+**Yanked releases:** every release before 2.3.3 is yanked on PyPI
+(2.0.0–2.3.2). The pre-2.2.0 uploads were unsupported early builds predating
+the SEC-01…SEC-22 hardening and the wheel-audit publish gate; the rest are
+superseded. Resolvers will only select **2.3.3** (the last release supporting
+Python 3.10 — see the versioning note above) or **2.4.0+**; yanked versions
+remain installable solely via exact `==` pins.
 
 [Unreleased]: https://github.com/rxb06/Credactor/compare/v2.4.0...HEAD
 [2.4.0]: https://github.com/rxb06/Credactor/compare/v2.3.3...v2.4.0

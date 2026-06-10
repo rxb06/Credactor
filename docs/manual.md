@@ -1,9 +1,8 @@
 # Credactor Manual
 
 Complete reference for every flag, mode, and combination. 
-Reflects the `develop` branch (the 2.4.0
-line). For limitations and safe usage see the [Disclaimer](DISCLAIMER.md); for
-the threat model see [Security](security.md).
+Reflects the 2.4.0 release. For limitations and safe usage see the
+[Disclaimer](DISCLAIMER.md); for the threat model see [Security](security.md).
 
 ---
 
