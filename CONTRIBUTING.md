@@ -25,7 +25,7 @@ python -m build
 python scripts/audit_wheel.py
 ```
 
-The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel contains only files tracked in the git repo. See [docs/security.md](docs/security.md#supply-chain-hardening) for details.
+The wheel audit (`scripts/audit_wheel.py`) verifies that the built wheel exactly matches the files tracked in the git repo — nothing extra smuggled in, nothing tracked left out — and fails if no wheel was built at all. See [docs/security.md](docs/security.md#supply-chain-hardening) for details.
 
 ## Code Style
 

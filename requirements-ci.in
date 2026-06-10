@@ -1,7 +1,12 @@
 # CI/build dependencies — used by .github/workflows/ci.yml and publish.yml
-# Regenerate: pip-compile --generate-hashes --allow-unsafe requirements-ci.in > requirements-ci.txt
+# Regenerate: pip-compile --generate-hashes --allow-unsafe --output-file=requirements-ci.txt requirements-ci.in
 # Project requires Python >=3.11; tomllib/ExceptionGroup are stdlib on supported versions.
 build
+# The build backend itself: workflows run `python -m build --no-isolation` so
+# the one package that writes every byte of the published wheel is covered by
+# the same hash pinning as everything else (an isolated build would download
+# setuptools fresh and unpinned at publish time). >=77 per build-system.requires.
+setuptools>=77
 pytest>=8.0
 ruff>=0.5
 mypy>=1.10

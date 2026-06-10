@@ -1,10 +1,15 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# >=77: first release that accepts the PEP 639 SPDX string `license` below —
+# building with 68-76 fails on "invalid pyproject.toml config: project.license".
+# "wheel" is omitted: setuptools >=70.1 builds wheels itself.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "credactor"
-version = "2.4.0"
+# Single-sourced from credactor/__init__.py (see [tool.setuptools.dynamic]) so
+# a release bump cannot leave pip metadata and `credactor --version` disagreeing.
+dynamic = ["version"]
 description = "Scan and redact hardcoded credentials in source code"
 readme = "README.md"
 license = "Apache-2.0"
@@ -37,6 +42,12 @@ credactor = "credactor.cli:main"
 
 [project.urls]
 Repository = "https://github.com/rxb06/Credactor"
+Issues = "https://github.com/rxb06/Credactor/issues"
+Changelog = "https://github.com/rxb06/Credactor/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/rxb06/Credactor/blob/main/docs/manual.md"
+
+[tool.setuptools.dynamic]
+version = {attr = "credactor.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["credactor*"]

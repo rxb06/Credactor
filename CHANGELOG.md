@@ -3,12 +3,24 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html),
+with one documented exception: dropping support for a near-end-of-life Python
+version may happen in a **minor** release. Such a drop is always flagged
+**BREAKING** in the release notes — if you must stay on an older Python, pin
+below the release that dropped it (2.4.0 dropped Python 3.10, so:
+`credactor<2.4`).
 
 ## [Unreleased]
 
 ### Added
 
+- PyPI sidebar links: `[project.urls]` now declares Issues, Changelog, and
+  Documentation alongside Repository.
+- The wheel audit gate (`scripts/audit_wheel.py`) now also fails when `dist/`
+  contains **no wheel at all** (a half-failed build previously produced a
+  false "Wheel audit passed"), and checks the **reverse direction** — a
+  tracked source file missing from the wheel is now an error, matching the
+  script's "match exactly" contract.
 - Unknown top-level keys in `.credactor.toml` now log a warning instead of
   being dropped silently. Malformed known keys already warned; a typo'd key
   (e.g. `entropy_treshold`) was the one config mistake with no signal — for a
@@ -35,12 +47,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--scan-json`, so a staged `credentials.json` with real secrets passed the
   pre-commit gate with a false all-clear. Lockfiles (`package-lock.json`)
   remain excluded either way, matching the directory walk.
+- README links now use absolute GitHub URLs. The README is the PyPI landing
+  page, and its relative links (Docs table, Manual, CI guide, LICENSE)
+  resolved against pypi.org and returned 404s on the live project page.
+- The published sdist no longer ships a partial, un-collectable copy of the
+  test suite: a new `MANIFEST.in` prunes `tests/` (setuptools' default
+  template grabbed `tests/test*.py` without `conftest.py`, `tests/__init__.py`,
+  or `tests/benchmark/`; the wheel was never affected).
+- `build-system.requires` now demands `setuptools>=77` — the declared `>=68`
+  floor could not actually build the project, because the PEP 639 SPDX
+  `license` string is only understood from 77 (verified: 68 fails with
+  "invalid pyproject.toml config: `project.license`"). The obsolete `wheel`
+  requirement is dropped (setuptools >=70.1 builds wheels itself).
+- `SECURITY.md`'s Supported Versions table now lists 2.4.x — it still said
+  2.3.x, leaving the shipped release outside its own support policy.
 
 ### Changed
 
+- The version is now single-sourced from `credactor.__version__` (pyproject
+  declares `dynamic = ["version"]`), so pip metadata and `credactor --version`
+  cannot drift apart on a release bump.
+- CI and publish builds run `python -m build --no-isolation` with setuptools
+  hash-pinned in `requirements-ci.txt`, so the build backend — the one package
+  that writes every byte of the published wheel — is covered by the same
+  supply-chain pinning as everything else.
 - Docs: clarified that external-scanner ingestion currently supports Gitleaks
   and TruffleHog, with more detectors planned — corrected README/manual wording
   that implied pairing with any scanner.
+- CHANGELOG preamble now states the project's one SemVer exception explicitly:
+  dropping a near-end-of-life Python version may happen in a minor release
+  (always flagged BREAKING), as occurred in 2.4.0.
+
+### Removed
+
+- The legacy repo-root `credential_redactor.py` shim. It was never shipped in
+  the wheel or sdist and no documentation referenced it; `credactor` and
+  `python -m credactor` cover every documented invocation. The wheel audit's
+  stale whitelist clause for it is gone too.
 
 ## [2.4.0] - 2026-06-07
 

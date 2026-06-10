@@ -1,7 +1,7 @@
 """
 .gitignore pattern loading and matching.
 
-Extracted from the original credential_redactor.py with no logic changes.
+Extracted from the original single-file script with no logic changes.
 """
 
 import fnmatch

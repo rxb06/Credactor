@@ -120,9 +120,9 @@ This hardening ships in **2.4.0** (the develop branch is entirely the 2.4.0 work
 
 ## Supply Chain Hardening
 
-- **Wheel integrity audit:** `scripts/audit_wheel.py` verifies wheel contents match the git repo.
+- **Wheel integrity audit:** `scripts/audit_wheel.py` verifies wheel contents match the git repo exactly (extra files, missing files, or no wheel at all each fail the gate).
 - **SHA-pinned GitHub Actions:** All `uses:` references pin to commit SHAs. Exception: `pypa/gh-action-pypi-publish` uses `release/v1` (Docker-based actions cannot be SHA-pinned).
-- **Hash-pinned CI dependencies:** Installed with `pip install --require-hashes`.
+- **Hash-pinned CI dependencies:** Installed with `pip install --require-hashes`. This covers the build backend too: release artifacts are built with `python -m build --no-isolation` against the hash-pinned setuptools, not a backend downloaded fresh at publish time.
 - **OIDC trusted publishing:** Short-lived tokens tied to this specific repo and workflow.
 - **Sigstore attestations:** Published wheels include cryptographic provenance.
 - **Environment protection:** The `pypi` GitHub environment requires manual approval.
