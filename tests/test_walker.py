@@ -232,6 +232,35 @@ class TestStagedScanning:
         assert any(key in f.get('full_value', '') or 'AWS' in f.get('type', '')
                    for f in findings), findings
 
+    def _commit_n_times(self, repo, n):
+        env = dict(check=True, capture_output=True, cwd=repo)
+        subprocess.run(['git', 'config', 'user.email', 't@t'], **env)
+        subprocess.run(['git', 'config', 'user.name', 't'], **env)
+        for i in range(n):
+            with open(os.path.join(repo, 'f.txt'), 'w') as f:
+                f.write(f'{i}\n')
+            subprocess.run(['git', 'add', '-A'], **env)
+            subprocess.run(['git', 'commit', '-m', f'c{i}'], **env)
+
+    def test_scan_history_warns_when_window_truncates(self, tmp_dir, credactor_caplog):
+        # A repo deeper than max_commits must say so: a truncated scan's
+        # all-clear was previously byte-identical to a fully-scanned clean
+        # repo, so secrets older than the window passed with silent exit 0.
+        repo = self._init_repo(tmp_dir)
+        self._commit_n_times(repo, 3)
+        scan_git_history(repo, config=Config(no_color=True), max_commits=2)
+        truncations = [r for r in credactor_caplog.records
+                       if 'most recent 2' in r.getMessage()]
+        assert truncations and 'NOT scanned' in truncations[0].getMessage()
+
+    def test_scan_history_no_warning_at_exact_window(self, tmp_dir, credactor_caplog):
+        # Exactly-at-cap repos are fully scanned — no false truncation notice.
+        repo = self._init_repo(tmp_dir)
+        self._commit_n_times(repo, 3)
+        scan_git_history(repo, config=Config(no_color=True), max_commits=3)
+        assert not [r for r in credactor_caplog.records
+                    if 'NOT scanned' in r.getMessage()]
+
     def test_scan_history_line_and_commit_fields(self, tmp_dir):
         # The hand-parsed `git log -p` hunk headers must yield the real line
         # number, and each finding must carry the introducing commit's hash —

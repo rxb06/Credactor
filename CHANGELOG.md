@@ -57,6 +57,13 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
+- `--scan-history` now warns when the repository is deeper than its
+  100-commit window. The truncated scan's all-clear was previously
+  byte-identical to a fully-scanned clean repo — a secret introduced and
+  removed more than 100 commits ago passed with an unqualified `[OK]` and
+  exit 0. The window itself is unchanged (deep-history audits remain the
+  domain of dedicated history scanners); the notice goes to stderr and never
+  changes the exit code.
 - `.credactor.toml` discovery now reaches the documented five parent
   directories. An off-by-one (the walk's first iteration was the target
   directory itself) silently stopped at four, so a root config in a deep

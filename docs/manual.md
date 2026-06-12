@@ -178,6 +178,9 @@ credactor --staged --ci          # canonical pre-commit gate
 Scans up to 100 commits of `git log -p`, reporting the commit hash where each
 secret was introduced. Verified: finds a secret that was committed then removed
 from the working tree. In a non-git directory it exits **2**.
+On a repository deeper than 100 commits a `[WARN]` states that only the most
+recent 100 were scanned — a truncated scan is never silently presented as a
+full-history all-clear. The exit code is unaffected by the notice.
 **Read-only: it forces dry-run even with `--fix-all`** — history findings
 reference committed content, not files on disk, so they cannot be redacted in
 place. To purge a committed secret, rewrite history (e.g. `git filter-repo`)
@@ -564,6 +567,10 @@ detail; these are the behaviours most likely to surprise.)
   another scanner via ingestion (Gitleaks or TruffleHog today, more incoming) for breadth.
 - **No cross-file or semantic analysis**; obfuscated/runtime-assembled secrets
   are missed.
+- **`--scan-history` covers the most recent 100 commits.** Secrets introduced
+  and removed earlier are out of scope; on a deeper repository a `[WARN]`
+  says so. For full-history audits use a dedicated history scanner
+  (e.g. `gitleaks git`), then remediate with Credactor.
 - **UTF-8 / Latin-1 only by default.** Other encodings (UTF-16, …) require the
   optional `charset-normalizer` / `chardet` extra; without it such files are read
   as Latin-1 and their secrets can be missed (Credactor prints a `[WARN]` when it

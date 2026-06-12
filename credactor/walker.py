@@ -341,6 +341,26 @@ def scan_git_history(
         logger.error('Cannot run git: %s', exc)
         return []
 
+    # A repo deeper than the window would otherwise produce an all-clear
+    # byte-identical to a fully-scanned clean repo. Probe one commit past the
+    # cap (bounded O(max_commits+1) walk) and say so. Best-effort: a probe
+    # failure only skips the notice, never affects findings.
+    try:
+        depth = subprocess.run(
+            ['git', 'rev-list', '--count', f'--max-count={max_commits + 1}', 'HEAD'],
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            cwd=str(root_path), timeout=_GIT_LOG_TIMEOUT_S,
+        )
+        if depth.returncode == 0 and depth.stdout.strip() == str(max_commits + 1):
+            logger.warning(
+                'history scan covered only the most recent %d commits — older '
+                'commits were NOT scanned. To audit full history use a '
+                'dedicated history scanner (see manual: Limitations).',
+                max_commits,
+            )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        logger.debug('history depth probe failed: %s', exc)
+
     findings: list[Finding] = []
     current_commit = ''
     current_file = ''
