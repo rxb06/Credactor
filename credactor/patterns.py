@@ -103,7 +103,11 @@ DYNAMIC_LOOKUP_RE = re.compile(
 # ---------------------------------------------------------------------------
 CRED_VAR_PATTERNS = re.compile(
     r'\b('
-    r'api[_\-]?key|apikey|api[_\-]?token|'
+    # prefix-tolerant like `secret` below: \b cannot match after '_', so
+    # test_api_key / my_api_key / aws_api_key need the explicit optional
+    # prefix (which demands a _/- separator — okapi_key stays unmatched).
+    # The old standalone `apikey` alternative is subsumed.
+    r'(?:\w+[_\-])?api[_\-]?key|api[_\-]?token|'
     r'auth[_\-]?token|access[_\-]?token|bearer[_\-]?token|'
     r'client[_\-]?secret|secret[_\-]?key|app[_\-]?secret|'
     r'(?:\w+[_\-])?secret(?:[_\-]\w+)?|'

@@ -17,6 +17,30 @@ from credactor.scanner import (
 )
 
 
+class TestPrefixedApiKeyVariable:
+    """Manual: safe values 'match by value: a real secret in a variable
+    merely *named* test_api_key is still flagged' — which requires the
+    name detector to see through prefixes like test_/my_/aws_."""
+
+    _VALUE = 'ZP35TmHVWyvc3d9Bf8tFbqRIzRogAqwJENsp4cm2'
+
+    @pytest.mark.parametrize('var', ['test_api_key', 'my_api_key',
+                                     'aws_api_key', 'stripe_api_key'])
+    def test_prefixed_name_with_real_value_flags_high(self, var):
+        findings = scan_line(1, f'{var} = "{self._VALUE}"', 'conf.py',
+                             config=Config(no_color=True))
+        assert len(findings) == 1
+        assert findings[0]['severity'] == 'high'
+        assert findings[0]['type'] == f'variable:{var}'
+
+    def test_safe_placeholder_value_stays_clean(self):
+        # The value-side safe list keeps suppressing fixture literals.
+        for value in ('test_api_key', 'your_api_key'):
+            findings = scan_line(1, f'test_api_key = "{value}"', 'conf.py',
+                                 config=Config(no_color=True))
+            assert findings == []
+
+
 class TestBareTokenVariable:
     """The manual's high tier lists bare `token = …` as a verified example;
     the variable regex had every prefixed form but not `token` itself."""

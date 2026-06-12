@@ -199,6 +199,11 @@ class TestCredVarPatterns:
         'token', 'TOKEN',
         # hyphen-delimited keys are word-boundary-visible (k8s/YAML manifests)
         'vault-token',
+        # prefixed api_key forms: \b cannot match after '_', so these need
+        # the explicit prefix alternative (manual: "a real secret in a
+        # variable merely named test_api_key is still flagged")
+        'test_api_key', 'my_api_key', 'aws_api_key', 'stripe_api_key',
+        'sendgrid_apikey',
     ])
     def test_matches(self, name):
         assert CRED_VAR_PATTERNS.search(name)
@@ -206,6 +211,9 @@ class TestCredVarPatterns:
     @pytest.mark.parametrize('name', [
         'username', 'email', 'name', 'description',
         'is_active', 'count', 'filepath',
+        # the api_key prefix demands an explicit _/- separator: substrings
+        # and lookalikes stay unmatched
+        'okapi_key', 'monkey', 'keyword', 'api_key_id',
         # \b cannot match after '_' or inside camelCase: the bare `token`
         # alternative must NOT drag in compound names — especially
         # pagination cursors, whose opaque high-entropy values would

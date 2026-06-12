@@ -57,6 +57,20 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
+- Prefixed API-key variable names (`test_api_key`, `my_api_key`,
+  `aws_api_key`, `stripe_api_key`, `sendgrid_apikey`, …) are now detected.
+  The manual has always stated that safe values match by *value* — "a real
+  secret in a variable merely named `test_api_key` is still flagged" — but
+  word boundaries cannot match after `_`, so every underscore-prefixed
+  `*_api_key` silently passed a `--ci` gate with exit 0. The fix mirrors
+  the prefix handling the `secret` family already had; the prefix demands
+  an explicit `_`/`-` separator (`okapi_key`, `api_key_id` stay unmatched,
+  pinned). **FP note on upgrade:** test fixtures assigning random-looking
+  values to `test_api_key`-style names will now flag — exactly what the
+  manual promises. Placeholder *values* (`test_api_key`, `your_api_key`,
+  `changeme`, …) remain auto-safe, and `.credactorignore` globs
+  (`tests/**`), inline `credactor:ignore`, and `extra_safe_values` cover
+  intentional fixtures.
 - Bare `token = "<value>"` is now detected (high severity), as the manual's
   severity table has always claimed. The variable-name detector carried
   every prefixed form (`api_token`, `auth_token`, `bot_token`, …) but not
