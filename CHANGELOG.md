@@ -66,7 +66,9 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
   alternatives. **Behaviour change:** `yes | credactor` / `echo y |
   credactor --fix-all` automation stops working by design — use
   `--fix-all --yes`. Real terminals and pty wrappers (expect, CI ttys) are
-  unaffected.
+  unaffected. Note for Git Bash/mintty on Windows: native Python sees mintty
+  as a pipe, not a console, so interactive prompts there need `winpty
+  credactor …` (or use `--fix-all --yes` / `--dry-run`).
 - `-f json`/`-f sarif` combined with `--fix-all` no longer corrupts the
   machine-readable stream. The confirmation banner, the `--no-backup` DANGER
   box, the `Proceed?` prompt, and the replacement summary all printed to

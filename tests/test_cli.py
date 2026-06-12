@@ -668,8 +668,12 @@ class TestFixAllYes:
             f.write(f'api_key = "{key}"\n')
         return src, key
 
-    def test_fix_all_without_yes_aborts_on_non_tty(self, tmp_dir, monkeypatch):
+    def test_fix_all_without_yes_aborts_on_eof_at_tty(self, tmp_dir, monkeypatch):
+        # isatty=True so this pins the EOF (Ctrl-D at the prompt) handler —
+        # the non-TTY pipe case is owned by TestTtyGates and would otherwise
+        # gate first, leaving this branch uncovered.
         src, key = self._repo(tmp_dir)
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
 
         def _raise_eof(*_a):
             raise EOFError()
@@ -816,7 +820,10 @@ class TestExitCodeEdgeBranches:
         assert 'Interrupted' in capsys.readouterr().err
 
     def test_fix_all_decline_aborts_exit_1(self, tmp_dir, monkeypatch, capsys):
+        # isatty=True so the answer branch is what's covered here — without
+        # it the TTY gate aborts first and 'n' is never read.
         path, key = self._make_secret(tmp_dir)
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
         monkeypatch.setattr('builtins.input', lambda *a: 'n')
         with pytest.raises(SystemExit) as exc:
             main(['--fix-all', tmp_dir])
