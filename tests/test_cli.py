@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -177,6 +178,61 @@ class TestMainExitCodes:
         with pytest.raises(SystemExit) as exc_info:
             main(['--config', tmp_dir, '--dry-run', tmp_dir])
         assert exc_info.value.code == 2
+
+
+class TestTtyGates:
+    """Interactive mode and the --fix-all confirmation require a real TTY on
+    stdin — a script accidentally piping y-prefixed text must not rewrite
+    files. --fix-all --yes remains the unattended path."""
+
+    _KEY = 'AKIA' + 'IOSFODNN7EXAMPLE'
+
+    def test_interactive_non_tty_exits_1_untouched(
+            self, make_file, monkeypatch, credactor_caplog):
+        path = make_file('secret.py', f'aws_key = "{self._KEY}"\n')
+        monkeypatch.setattr('builtins.input', lambda *a: 'y')
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: False)
+        with pytest.raises(SystemExit) as exc_info:
+            main([os.path.dirname(path)])
+        assert exc_info.value.code == 1
+        with open(path) as f:
+            assert self._KEY in f.read()
+        assert not os.path.exists(path + '.bak')
+        assert any('requires a TTY' in r.getMessage()
+                   for r in credactor_caplog.records)
+
+    def test_fix_all_without_yes_non_tty_aborts(
+            self, make_file, monkeypatch, capsys):
+        path = make_file('secret.py', f'aws_key = "{self._KEY}"\n')
+        monkeypatch.setattr('builtins.input', lambda *a: 'y')
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: False)
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--fix-all', os.path.dirname(path)])
+        assert exc_info.value.code == 1
+        with open(path) as f:
+            assert self._KEY in f.read()
+        assert 'pass --yes' in capsys.readouterr().out
+
+    def test_interactive_with_tty_redacts(self, make_file, monkeypatch):
+        # Control: a real TTY (pty wrappers included) keeps working.
+        path = make_file('secret.py', f'aws_key = "{self._KEY}"\n')
+        monkeypatch.setattr('builtins.input', lambda *a: 'y')
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
+        with pytest.raises(SystemExit) as exc_info:
+            main([os.path.dirname(path)])
+        assert exc_info.value.code == 0
+        with open(path) as f:
+            assert self._KEY not in f.read()
+
+    def test_fix_all_yes_non_tty_proceeds(self, make_file, monkeypatch):
+        # Control: the documented unattended path is unaffected by the gate.
+        path = make_file('secret.py', f'aws_key = "{self._KEY}"\n')
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: False)
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--fix-all', '--yes', os.path.dirname(path)])
+        assert exc_info.value.code == 0
+        with open(path) as f:
+            assert self._KEY not in f.read()
 
 
 class TestNonTextFixAllStreamPurity:
@@ -580,6 +636,7 @@ class TestReplacementPrecedence:
         src, key = self._make_repo(tmp_dir)
         with open(os.path.join(tmp_dir, '.credactor.toml'), 'w') as f:
             f.write('replacement = "FROM_CONFIG"\n')
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
         monkeypatch.setattr('builtins.input', lambda *a: 'y')
         with pytest.raises(SystemExit):
             main(['--fix-all', '--replace-with', 'custom',
@@ -592,6 +649,7 @@ class TestReplacementPrecedence:
         src, key = self._make_repo(tmp_dir)
         with open(os.path.join(tmp_dir, '.credactor.toml'), 'w') as f:
             f.write('replacement = "FROM_CONFIG"\n')
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
         monkeypatch.setattr('builtins.input', lambda *a: 'y')
         with pytest.raises(SystemExit):
             main(['--fix-all', '--replace-with', 'custom', tmp_dir])
@@ -796,6 +854,7 @@ class TestScanJsonEndToEnd:
         # collected .json like every other mode. The former numbered
         # file-picker prompt is gone — the only prompt is Replace?.
         self._make_json_secret(tmp_dir)
+        monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
         monkeypatch.setattr('builtins.input', lambda *a: 'n')
         with pytest.raises(SystemExit) as exc:
             main(['--scan-json', tmp_dir])

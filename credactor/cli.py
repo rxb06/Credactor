@@ -470,6 +470,12 @@ def _handle_fix_all(findings: list[Finding], target: str, config: Config) -> int
     # documented behavior, now with an explicit opt-in instead of a footgun.
     if config.assume_yes:
         print('  Proceeding (--yes).', file=out)
+    elif sys.stdin is None or not sys.stdin.isatty():
+        # A pipe whose first line starts with 'y' would otherwise answer the
+        # confirmation below — scripts must opt in explicitly with --yes.
+        print('  Aborted: confirmation requires a TTY — pass --yes for '
+              'non-interactive use.', file=out)
+        sys.exit(1)
     else:
         try:
             # Bare input() so the prompt itself can't land in a redirected
@@ -651,6 +657,15 @@ def _main_inner(argv: list[str] | None = None) -> None:
     if config.output_format != 'text':
         sys.exit(1)
 
-    # Interactive mode (default, text only)
+    # Interactive mode (default, text only). The manual promises a TTY
+    # requirement: without this gate a pipe of y-prefixed text answers the
+    # per-finding prompts and rewrites files. Exit 1, not 2 — the findings
+    # above were reported and remain unresolved, same as the EOF path.
+    if sys.stdin is None or not sys.stdin.isatty():
+        logger.error(
+            'Interactive mode requires a TTY on stdin. Use --dry-run/--ci to '
+            'report, or --fix-all --yes to redact unattended.',
+        )
+        sys.exit(1)
     unresolved = interactive_review(findings, target, config)
     sys.exit(1 if unresolved > 0 else 0)

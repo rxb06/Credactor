@@ -57,6 +57,16 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
+- Interactive mode and the `--fix-all` confirmation now actually require a
+  TTY on stdin, as the manual has always stated. There was no `isatty()`
+  check anywhere: piping y-prefixed text into default mode answered the
+  per-finding prompts and rewrote files, and the documented "non-TTY stdin
+  aborts" held only for *empty* stdin (`</dev/null`), not for pipes with
+  content. Both paths now exit 1 with a pointer to the unattended
+  alternatives. **Behaviour change:** `yes | credactor` / `echo y |
+  credactor --fix-all` automation stops working by design — use
+  `--fix-all --yes`. Real terminals and pty wrappers (expect, CI ttys) are
+  unaffected.
 - `-f json`/`-f sarif` combined with `--fix-all` no longer corrupts the
   machine-readable stream. The confirmation banner, the `--no-backup` DANGER
   box, the `Proceed?` prompt, and the replacement summary all printed to
