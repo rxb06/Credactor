@@ -65,8 +65,10 @@ with `-f json` and read the `severity` field):
 | **medium** | Heuristic value matches and generic credential variables | quoted hex (32–64 chars), Stripe **test** key `sk_test_…`, `webhook_secret = …` |
 | **low** | Weak heuristics and ID-type variables | quoted Base64 (≥60 chars), `client_id` / `tenant_id` / `app_id` |
 
-In text output, severities are colour-coded — critical and high **red**, medium
-**yellow**, low **cyan** (`--no-color`, or a non-terminal stdout, disables this).
+In text output, severities are colour-coded — critical **bright magenta**
+(distinct from high so the top two severities differ at a glance), high
+**red**, medium **yellow**, low **cyan** (`--no-color`, or a non-terminal
+stdout, disables this).
 
 ### Entropy model
 
@@ -104,7 +106,10 @@ Exactly one *behaviour* applies per run; the precedence/forcing rules are in
 
 `credactor <target>` with no mode flag walks each finding and prompts
 `Replace? [y/N]`. `y` redacts that finding (creating a `.bak`), `n`/Enter skips.
-Requires a TTY. Exit code = number of unresolved findings → 0 if all resolved/none,
+Requires a TTY — piped stdin is rejected with exit 1 (use `--dry-run`/`--ci`
+to report, or `--fix-all --yes` to redact unattended). Git Bash/mintty on
+Windows is seen as a pipe by native Python; run `winpty credactor …` there.
+Exit code = number of unresolved findings → 0 if all resolved/none,
 1 otherwise.
 
 Each finding is shown before its prompt (verified output):
@@ -221,6 +226,14 @@ Apply to `--fix-all` and interactive redaction. Verified outputs for the line
   parses (verified). Note it emits an env **reference** (e.g. `os.environ["KEY"]`),
   not the import it needs — add the matching import (e.g. `import os`) if the file
   doesn't already have one, or it will raise `NameError` at runtime.
+- **Env mode falls back to the sentinel** when a finding is not a standalone
+  quoted assignment — a bare token on its own line, or a secret embedded in a
+  larger string (a `Bearer` header, a connection URL): inserting a code
+  expression there would break syntax, so the value becomes
+  `REDACTED_BY_CREDACTOR` instead. Such findings still count as *replaced*.
+  The duplicate-copy sweep also uses the sentinel in env mode, so a single
+  env-mode run can legitimately leave a mix of `os.environ[…]` and sentinel
+  styles in one file — every copy of the secret is gone either way.
 
 ---
 
@@ -401,6 +414,12 @@ plus SSH / private-key files matched by name (`id_rsa`, `id_dsa`, `id_ecdsa`,
 `id_ed25519`). `.json` is read only with `--scan-json` (in directory walks and
 `--staged` alike). A file named **directly** on the command line is scanned
 even if its extension is not in this list.
+
+> **`.env.*` is a literal-filename rule, not an extension rule:** it matches
+> dotfiles *named* `.env.<anything>` (`.env.production`, `.env-local`). A file
+> like `x.env.production` has the extension `.production` and is **not**
+> scanned in a walk — name it directly or add the extension via
+> `extra_extensions`.
 
 ### `--fail-on-error`
 
