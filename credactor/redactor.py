@@ -265,14 +265,69 @@ def _secure_delete(filepath: str) -> None:
 # ---------------------------------------------------------------------------
 # Batch replacement per file (#14)
 # ---------------------------------------------------------------------------
+def _sweep_stray_copies(
+    lines: list[str],
+    file_findings: list[Finding],
+    config: Config,
+    preserved: set[int],
+    filepath: str,
+) -> None:
+    """Clear remaining exact copies of redacted values on UNREPORTED lines.
+
+    The per-finding replace handles one occurrence each, but the same secret
+    literal can survive on lines no finding cited — a trailing comment, a
+    second non-credential variable, or (the common case) a detector that
+    DEDUPLICATED repeated copies and reported the value only once. Lines in
+    ``preserved`` (1-based) are never touched: they belong to known findings
+    whose own adjudication — an explicit interactive skip, a pending prompt,
+    or a failed replacement — owns them. Scope is bounded to this one file.
+    """
+    stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
+             else config.custom_replacement)
+    values = {f['full_value'] for f in file_findings if f['full_value']}
+    if not values:
+        return
+    # One compiled alternation (longest value first so a short value can't
+    # shadow a longer one). Word-boundary anchors keep us from corrupting a
+    # substring of a larger token like 123456789. The replacement is a
+    # function so a custom string with backreference-like text (e.g. '\\1')
+    # is inserted literally, not as a regex template. On the finding's own
+    # line the literal is already gone (replaced above), so re.subn is a
+    # no-op there; duplicate copies on other lines are what this catches.
+    pat = re.compile(
+        r'(?<!\w)(?:'
+        + '|'.join(re.escape(v) for v in sorted(values, key=len, reverse=True))
+        + r')(?!\w)'
+    )
+    stray_count = 0
+    for idx in range(len(lines)):
+        if idx + 1 in preserved:
+            continue
+        lines[idx], n = pat.subn(lambda _m: stray, lines[idx])
+        stray_count += n
+    if stray_count:
+        # Default-visible (stderr): the file was modified beyond the
+        # adjudicated findings — the summary alone would under-report it.
+        logger.warning(
+            '%s: also cleared %d unreported cop%s of redacted secret(s) on '
+            'lines no finding cited (value-global sweep).',
+            filepath, stray_count, 'y' if stray_count == 1 else 'ies',
+        )
+
+
 def batch_replace_in_file(
     filepath: str,
     file_findings: list[Finding],
     config: Config,
+    *,
+    sweep_exclude_lines: frozenset[int] = frozenset(),
 ) -> tuple[int, int]:
     """Replace all findings in a single file in one read-modify-write pass.
 
     Applies replacements bottom-to-top to preserve line numbers.
+    ``sweep_exclude_lines`` — 1-based lines owned by known findings NOT being
+    replaced in this call (interactive skips / not-yet-prompted findings);
+    the duplicate-copy sweep leaves them untouched.
     Returns (replaced_count, failed_count).
 
     Addresses #1 (backup), #14 (batch), #16 (encoding-aware).
@@ -333,6 +388,7 @@ def batch_replace_in_file(
 
         replaced = 0
         failed = 0
+        failed_lines: set[int] = set()
 
         # Sort by line number descending so earlier replacements don't shift later ones
         sorted_findings = sorted(file_findings, key=lambda f: f['line'], reverse=True)
@@ -345,6 +401,7 @@ def batch_replace_in_file(
             if idx >= len(lines):
                 logger.warning('Line %d out of range in %s — skipping.', lineno, filepath)
                 failed += 1
+                failed_lines.add(lineno)
                 continue
 
             original = lines[idx]
@@ -353,6 +410,7 @@ def batch_replace_in_file(
                     'Value no longer found on line %d in %s (already replaced?).', lineno, filepath,
                 )
                 failed += 1
+                failed_lines.add(lineno)
                 continue
 
             replacement, takes_quotes = _make_replacement(finding, config, filepath)
@@ -362,35 +420,14 @@ def batch_replace_in_file(
                 lines[idx] = original.replace(full_value, replacement, 1)
             replaced += 1
 
-        # H10 + value-global sweep: the per-finding replace handles one
-        # occurrence each, but the same secret literal can survive on lines no
-        # finding cited — a trailing comment, a second non-credential variable,
-        # or (the common case) a detector that DEDUPLICATED repeated copies and
-        # reported the value only once even though it recurs on several lines.
-        # Sweep EVERY line of this already-rewritten file and replace any
-        # remaining exact copy of a redacted value, so no known secret literal
-        # is left behind in a file we are already modifying. Scope is bounded to
-        # this one file — other files are never opened by this sweep.
+        # H10 + value-global sweep: see _sweep_stray_copies. Lines owned by
+        # known findings the caller did not approve here (sweep_exclude_lines)
+        # and lines whose own replacement just failed keep their content —
+        # each finding's adjudication owns its line.
         if replaced:
-            stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
-                     else config.custom_replacement)
-            values = {f['full_value'] for f in file_findings if f['full_value']}
-            if values:
-                # One compiled alternation (longest value first so a short value
-                # can't shadow a longer one). Word-boundary anchors keep us from
-                # corrupting a substring of a larger token like 123456789. The
-                # replacement is a function so a custom string with
-                # backreference-like text (e.g. '\1') is inserted literally, not
-                # as a regex template. On the finding's own line the literal is
-                # already gone (replaced above), so re.sub is a no-op there;
-                # duplicate copies on other lines are what this catches.
-                pat = re.compile(
-                    r'(?<!\w)(?:'
-                    + '|'.join(re.escape(v) for v in sorted(values, key=len, reverse=True))
-                    + r')(?!\w)'
-                )
-                for idx in range(len(lines)):
-                    lines[idx] = pat.sub(lambda _m: stray, lines[idx])
+            _sweep_stray_copies(lines, file_findings, config,
+                                set(sweep_exclude_lines) | failed_lines,
+                                filepath)
 
         # Atomic write: write to temp file, then rename over original.
         # Prevents corruption if process crashes mid-write.
@@ -428,12 +465,15 @@ def replace_single(
     filepath: str,
     finding: Finding,
     config: Config,
+    *,
+    sweep_exclude_lines: frozenset[int] = frozenset(),
 ) -> bool:
     """Replace a single finding. Used in interactive mode.
 
     Returns True on success.
     """
-    replaced, _ = batch_replace_in_file(filepath, [finding], config)
+    replaced, _ = batch_replace_in_file(
+        filepath, [finding], config, sweep_exclude_lines=sweep_exclude_lines)
     return replaced > 0
 
 
@@ -453,6 +493,13 @@ def interactive_review(
     total = len(findings)
     replaced = 0
     skipped = 0
+
+    # Every known finding's line, per file: when one finding is approved, the
+    # duplicate-copy sweep must not touch lines owned by the OTHERS — their
+    # fate belongs to their own prompts (an explicit 'n' must stick).
+    lines_by_file: dict[str, set[int]] = {}
+    for f in findings:
+        lines_by_file.setdefault(f['file'], set()).add(f['line'])
 
     replacement_desc = config.custom_replacement
     if config.replace_mode == 'env':
@@ -493,7 +540,9 @@ def interactive_review(
                 return total - replaced
 
             if answer in ('y', 'yes'):
-                ok = replace_single(finding['file'], finding, config)
+                others = lines_by_file[finding['file']] - {finding['line']}
+                ok = replace_single(finding['file'], finding, config,
+                                    sweep_exclude_lines=frozenset(others))
                 if ok:
                     print('  -> Replaced.\n')
                     replaced += 1

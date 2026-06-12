@@ -188,15 +188,21 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
   drop `extra_extensions`/threshold settings and flip a failing secret gate to
   a pass. Scripts that relied on a sometimes-absent config falling back to
   defaults must now guard the flag themselves.
-- Redaction now clears **every** copy of a secret in a file it rewrites, not
-  just the reported occurrence. When a detector deduplicates a value repeated
-  on several lines (e.g. TruffleHog reports it once) and that report is ingested,
-  a single `--fix-all` pass previously left the unreported duplicate copies live;
-  the stray-copy sweep is now value-global within each touched file, so all
-  copies go in one pass (verified end-to-end: a 4-line duplicated secret →
-  TruffleHog re-scan clean after one pass, was four). Scope stays bounded to
-  files being rewritten — other files are never opened by the sweep, and
-  word-boundary anchoring still protects substrings of larger tokens.
+- Redaction now clears every **unreported** copy of a secret in a file it
+  rewrites, not just the reported occurrence. When a detector deduplicates a
+  value repeated on several lines (e.g. TruffleHog reports it once) and that
+  report is ingested, a single `--fix-all` pass previously left the
+  unreported duplicate copies live; the stray-copy sweep is now value-global
+  within each touched file, so all such copies go in one pass (verified
+  end-to-end: a 4-line duplicated secret → TruffleHog re-scan clean after
+  one pass, was four). The sweep never overrides a finding's own
+  adjudication: a copy the user explicitly skipped in interactive review —
+  or one whose replacement failed — keeps its line, so the
+  `replaced/skipped` summary always matches the file state. When the sweep
+  does clear unreported copies, a `[WARN]` states the count. Scope stays
+  bounded to files being rewritten — other files are never opened by the
+  sweep, and word-boundary anchoring still protects substrings of larger
+  tokens.
 - `--staged` now runs the same full scan as a working-tree scan. The staged
   path previously used a reduced per-line loop that skipped the PEM-block and
   multi-line passes, so a secret inside a triple-quoted / template-literal

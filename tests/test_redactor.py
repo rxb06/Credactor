@@ -458,6 +458,73 @@ class TestEnvRefForLanguage:
         assert _env_ref_for_language('API_KEY', '.go') == 'os.Getenv("API_KEY")'
 
 
+class TestSweepRespectsAdjudication:
+    """The value-global sweep clears UNREPORTED copies only. A finding the
+    user explicitly skipped — or one whose own replacement failed — owns its
+    line, and the sweep must not override that adjudication; the summary
+    then matches the file state."""
+
+    def test_interactive_skip_preserves_skipped_copies(
+            self, make_file, monkeypatch, capsys):
+        content = (f'a = "{_AWS_KEY}"\n'
+                   f'b = "{_AWS_KEY}"\n'
+                   f'c = "{_AWS_KEY}"\n')
+        path = make_file('m.py', content)
+        findings = [_mk_finding(path, _AWS_KEY, line=i) for i in (1, 2, 3)]
+        answers = iter(['y', 'n', 'n'])
+        monkeypatch.setattr('builtins.input', lambda *a: next(answers))
+        unresolved = interactive_review(findings, os.path.dirname(path),
+                                        Config(no_backup=True))
+        assert unresolved == 2
+        with open(path) as fh:
+            text = fh.read()
+        assert text.count(_AWS_KEY) == 2          # the skipped copies live on
+        assert 'REDACTED_BY_CREDACTOR' in text.splitlines()[0]
+        assert '1 replaced  |  2 skipped  |  3 total' in capsys.readouterr().out
+
+    def test_fix_all_still_sweeps_unreported_copies(
+            self, make_file, credactor_caplog):
+        # The ingest-dedup case the sweep exists for: one reported finding,
+        # copies on lines no finding cites — all cleared, and said so.
+        content = (f'a = "{_AWS_KEY}"\n'
+                   f'# backup copy: {_AWS_KEY}\n'
+                   f'c = "{_AWS_KEY}"\n')
+        path = make_file('d.py', content)
+        fix_all([_mk_finding(path, _AWS_KEY, line=1)], os.path.dirname(path),
+                Config(no_backup=True))
+        with open(path) as fh:
+            assert _AWS_KEY not in fh.read()
+        notes = [r for r in credactor_caplog.records
+                 if 'unreported' in r.getMessage()]
+        assert len(notes) == 1
+        assert '2 unreported' in notes[0].getMessage()
+
+    def test_no_sweep_note_when_nothing_unreported(
+            self, make_file, credactor_caplog):
+        path = make_file('e.py', f'a = "{_AWS_KEY}"\n')
+        fix_all([_mk_finding(path, _AWS_KEY, line=1)], os.path.dirname(path),
+                Config(no_backup=True))
+        assert not [r for r in credactor_caplog.records
+                    if 'unreported' in r.getMessage()]
+
+    def test_failed_finding_line_not_swept(self, make_file):
+        # Line 2's own finding fails (value drifted since scan); the line
+        # also carries a copy of line 1's value. A drifted line is reported
+        # 'failed' — silently rewriting it anyway would mask the failure.
+        content = (f'a = "{_AWS_KEY}"\n'
+                   f'b = "{_AWS_KEY}"  # drifted\n')
+        path = make_file('f.py', content)
+        findings = [_mk_finding(path, _AWS_KEY, line=1),
+                    _mk_finding(path, 'VALUE_NOT_ON_THIS_LINE', line=2)]
+        replaced, failed = batch_replace_in_file(path, findings,
+                                                 Config(no_backup=True))
+        assert (replaced, failed) == (1, 1)
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+        assert _AWS_KEY not in lines[0]
+        assert _AWS_KEY in lines[1]               # its own adjudication failed
+
+
 class TestUnreadableFileFailsAlone:
     """A read failure (incl. UnicodeDecodeError from a truncated multibyte
     encoding) must fail THAT file only — an ingested finding pointing at a

@@ -233,7 +233,14 @@ Apply to `--fix-all` and interactive redaction. Verified outputs for the line
   `REDACTED_BY_CREDACTOR` instead. Such findings still count as *replaced*.
   The duplicate-copy sweep also uses the sentinel in env mode, so a single
   env-mode run can legitimately leave a mix of `os.environ[…]` and sentinel
-  styles in one file — every copy of the secret is gone either way.
+  styles in one file.
+- **The duplicate-copy sweep clears *unreported* copies only.** When a
+  rewritten file still holds exact copies of a redacted value on lines no
+  finding cited (e.g. a detector deduplicated a repeated value), they are
+  cleared in the same pass and a `[WARN]` states how many. A copy that *is*
+  a known finding keeps its own adjudication: answering `n` in interactive
+  review leaves that copy untouched, and the `replaced/skipped` summary
+  always matches the file state.
 
 ---
 
