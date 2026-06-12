@@ -342,7 +342,9 @@ credactor --ci -f sarif . > results.sarif
 ```
 
 > In non-CI, non-text runs Credactor reports and exits 1 (it does not enter
-> interactive redaction with JSON/SARIF output).
+> interactive redaction with JSON/SARIF output). With an explicit `--fix-all`
+> it redacts: stdout stays a single parseable JSON/SARIF document and the
+> confirmation/summary text goes to stderr.
 
 ---
 
@@ -543,6 +545,7 @@ Verified rules:
 | `--secure-backup-dir` + `--secure-delete` | backup moved to DIR, then wiped |
 | `--no-backup` + `--fix-all` | redacts with no recovery copy (extra confirmation shown) |
 | non-text `--format` in non-CI | reports and exits 1 (no interactive redaction) |
+| non-text `--format` + `--fix-all` | `--fix-all` wins and redacts; stdout carries **only** the JSON/SARIF report, confirmation/summary text goes to stderr; exit 0 when all replaced |
 
 ---
 

@@ -179,6 +179,45 @@ class TestMainExitCodes:
         assert exc_info.value.code == 2
 
 
+class TestNonTextFixAllStreamPurity:
+    """-f json/sarif + --fix-all --yes: stdout must stay a single parseable
+    document; confirmation banners and the summary belong on stderr."""
+
+    _KEY = 'AKIA' + 'IOSFODNN7EXAMPLE'
+
+    def test_json_fix_all_stdout_is_pure_json(self, make_file, capsys):
+        path = make_file('secret.py', f'aws_key = "{self._KEY}"\n')
+        with pytest.raises(SystemExit) as exc_info:
+            main(['-f', 'json', '--fix-all', '--yes', os.path.dirname(path)])
+        assert exc_info.value.code == 0
+        out, err = capsys.readouterr()
+        data = json.loads(out)  # was: JSON followed by human text
+        assert data['count'] == 1
+        assert '--fix-all will modify' in err
+        assert 'Summary' in err
+        with open(path) as f:
+            assert self._KEY not in f.read()
+
+    def test_sarif_fix_all_stdout_is_pure_sarif(self, make_file, capsys):
+        path = make_file('secret.py', f'aws_key = "{self._KEY}"\n')
+        with pytest.raises(SystemExit) as exc_info:
+            main(['-f', 'sarif', '--fix-all', '--yes', os.path.dirname(path)])
+        assert exc_info.value.code == 0
+        out, err = capsys.readouterr()
+        data = json.loads(out)
+        assert data['version'] == '2.1.0'
+        assert 'Summary' in err
+
+    def test_text_fix_all_summary_stays_on_stdout(self, make_file, capsys):
+        path = make_file('secret.py', f'aws_key = "{self._KEY}"\n')
+        with pytest.raises(SystemExit) as exc_info:
+            main(['--fix-all', '--yes', os.path.dirname(path)])
+        assert exc_info.value.code == 0
+        out, _ = capsys.readouterr()
+        assert '--fix-all will modify' in out
+        assert 'Summary' in out
+
+
 class TestGitleaksFileTargetRejection:
     """--from-gitleaks with a file target must be rejected with exit code 2."""
 

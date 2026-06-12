@@ -57,6 +57,14 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
+- `-f json`/`-f sarif` combined with `--fix-all` no longer corrupts the
+  machine-readable stream. The confirmation banner, the `--no-backup` DANGER
+  box, the `Proceed?` prompt, and the replacement summary all printed to
+  stdout *after* the report, so redirecting it produced an unparseable file;
+  they now go to stderr whenever the format is not `text` (text-mode output
+  is byte-identical). The previously undocumented precedence — `--fix-all`
+  wins over the non-text report-and-exit-1 rule and redacts — is now stated
+  in the manual's flag-combination matrix.
 - `--dry-run --fix-all` now warns that dry-run takes precedence and
   `--fix-all` is ignored. The combination already behaved safely (report
   only, nothing modified) but did so silently, while the equivalent

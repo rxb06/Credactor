@@ -8,6 +8,7 @@ import contextlib
 import os
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -534,17 +535,26 @@ def fix_all(
 def _print_summary(
     replaced: int, other: int, total: int, config: Config, label: str = 'skipped',
 ) -> None:
-    print(f'{"=" * 70}')
-    print(f'  Summary:  {replaced} replaced  |  {other} {label}  |  {total} total')
+    # Mirror _handle_fix_all's stream choice: with -f json/sarif the report on
+    # stdout must stay a single parseable document, so the summary goes to
+    # stderr. Interactive review is text-only, where this is still stdout.
+    out = sys.stdout if config.output_format == 'text' else sys.stderr
+    print(f'{"=" * 70}', file=out)
+    print(f'  Summary:  {replaced} replaced  |  {other} {label}  |  {total} total',
+          file=out)
     if replaced:
-        print('  Reminder: rotate / revoke any credentials that were just redacted.')
+        print('  Reminder: rotate / revoke any credentials that were just redacted.',
+              file=out)
         # The plaintext warning only applies when a .bak can still exist:
         # --no-backup never writes one and --secure-delete wipes it. It stays
         # for --secure-backup-dir — those backups are plaintext too, just
         # elsewhere. (A failed secure-delete already logs its own warning.)
         if not config.no_backup and not config.secure_delete:
-            print('  SECURITY: .bak backup files contain original credentials in PLAINTEXT.')
-            print('            Use --secure-backup-dir to store backups outside the repo,')
-            print('            or --secure-delete to overwrite backups after verification.')
-            print('            At minimum, delete .bak files before committing.')
-    print(f'{"=" * 70}\n')
+            print('  SECURITY: .bak backup files contain original credentials in PLAINTEXT.',
+                  file=out)
+            print('            Use --secure-backup-dir to store backups outside the repo,',
+                  file=out)
+            print('            or --secure-delete to overwrite backups after verification.',
+                  file=out)
+            print('            At minimum, delete .bak files before committing.', file=out)
+    print(f'{"=" * 70}\n', file=out)

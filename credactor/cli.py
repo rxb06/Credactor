@@ -450,31 +450,37 @@ def _print_banner(target_resolved_path: Path) -> None:
 
 def _handle_fix_all(findings: list[Finding], target: str, config: Config) -> int:
     """Confirm with the user and run ``fix_all``. Returns unresolved count."""
+    # With -f json/sarif the report on stdout must stay a single parseable
+    # document, so every human-facing line here goes to stderr instead.
+    out = sys.stdout if config.output_format == 'text' else sys.stderr
     by_file = group_by_file(findings)
     print(f'\n  --fix-all will modify {len(by_file)} file(s) '
-          f'with {len(findings)} replacement(s).')
+          f'with {len(findings)} replacement(s).', file=out)
     if not config.no_backup:
-        print('  .bak backups will be created (contain original secrets).')
+        print('  .bak backups will be created (contain original secrets).', file=out)
     else:
-        print('  ┌─────────────────────────────────────────────────────────┐')
-        print('  │  DANGER: --no-backup is set. Original values will be    │')
-        print('  │  PERMANENTLY LOST. Ensure you have git history or       │')
-        print('  │  another recovery mechanism before proceeding.          │')
-        print('  └─────────────────────────────────────────────────────────┘')
-    print('  Tip: run with --dry-run first to preview changes.')
+        print('  ┌─────────────────────────────────────────────────────────┐', file=out)
+        print('  │  DANGER: --no-backup is set. Original values will be    │', file=out)
+        print('  │  PERMANENTLY LOST. Ensure you have git history or       │', file=out)
+        print('  │  another recovery mechanism before proceeding.          │', file=out)
+        print('  └─────────────────────────────────────────────────────────┘', file=out)
+    print('  Tip: run with --dry-run first to preview changes.', file=out)
     # L3: --yes skips the interactive gate for non-interactive/CI use. Without it
     # a non-TTY stdin (pipe, </dev/null) raises EOFError below and aborts — the
     # documented behavior, now with an explicit opt-in instead of a footgun.
     if config.assume_yes:
-        print('  Proceeding (--yes).')
+        print('  Proceeding (--yes).', file=out)
     else:
         try:
-            answer = input('  Proceed? [y/N]: ').strip().lower()
+            # Bare input() so the prompt itself can't land in a redirected
+            # JSON/SARIF document (input(prompt) writes the prompt to stdout).
+            print('  Proceed? [y/N]: ', end='', file=out, flush=True)
+            answer = input().strip().lower()
         except (KeyboardInterrupt, EOFError):
-            print('\n  Aborted.')
+            print('\n  Aborted.', file=out)
             sys.exit(1)
         if answer not in ('y', 'yes'):
-            print('  Aborted.')
+            print('  Aborted.', file=out)
             sys.exit(1)
     return fix_all(findings, target, config)
 
