@@ -481,7 +481,7 @@ def interactive_review(
                       f'applied. No further changes will be made.')
                 if replaced and not config.no_backup:
                     print('  .bak backups exist for modified files.')
-                _print_summary(replaced, skipped, total)
+                _print_summary(replaced, skipped, total, config)
                 return total - replaced
 
             if answer in ('y', 'yes'):
@@ -500,7 +500,7 @@ def interactive_review(
             else:
                 print("  Please enter 'y' or 'n'.")
 
-    _print_summary(replaced, skipped, total)
+    _print_summary(replaced, skipped, total, config)
     return total - replaced
 
 
@@ -524,17 +524,24 @@ def fix_all(
         total_replaced += replaced
         total_failed += failed
 
-    _print_summary(total_replaced, total_failed, len(findings), label='failed')
+    _print_summary(total_replaced, total_failed, len(findings), config, label='failed')
     return total_failed
 
 
-def _print_summary(replaced: int, other: int, total: int, label: str = 'skipped') -> None:
+def _print_summary(
+    replaced: int, other: int, total: int, config: Config, label: str = 'skipped',
+) -> None:
     print(f'{"=" * 70}')
     print(f'  Summary:  {replaced} replaced  |  {other} {label}  |  {total} total')
     if replaced:
         print('  Reminder: rotate / revoke any credentials that were just redacted.')
-        print('  SECURITY: .bak backup files contain original credentials in PLAINTEXT.')
-        print('            Use --secure-backup-dir to store backups outside the repo,')
-        print('            or --secure-delete to overwrite backups after verification.')
-        print('            At minimum, delete .bak files before committing.')
+        # The plaintext warning only applies when a .bak can still exist:
+        # --no-backup never writes one and --secure-delete wipes it. It stays
+        # for --secure-backup-dir — those backups are plaintext too, just
+        # elsewhere. (A failed secure-delete already logs its own warning.)
+        if not config.no_backup and not config.secure_delete:
+            print('  SECURITY: .bak backup files contain original credentials in PLAINTEXT.')
+            print('            Use --secure-backup-dir to store backups outside the repo,')
+            print('            or --secure-delete to overwrite backups after verification.')
+            print('            At minimum, delete .bak files before committing.')
     print(f'{"=" * 70}\n')

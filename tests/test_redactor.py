@@ -458,6 +458,46 @@ class TestEnvRefForLanguage:
         assert _env_ref_for_language('API_KEY', '.go') == 'os.Getenv("API_KEY")'
 
 
+class TestSummaryBackupFooter:
+    """The plaintext-.bak SECURITY footer must reflect the backup mode: under
+    --no-backup no .bak ever exists, and --secure-delete wipes it — telling
+    users to go delete nonexistent files is misleading."""
+
+    def test_no_backup_suppresses_footer(self, make_file, capsys):
+        path = make_file('a.py', f'api_key = "{_AWS_KEY}"\n')
+        fix_all([_mk_finding(path, _AWS_KEY)], os.path.dirname(path),
+                Config(no_backup=True))
+        out = capsys.readouterr().out
+        assert '1 replaced' in out
+        assert 'SECURITY: .bak' not in out
+        assert 'rotate / revoke' in out  # rotation advice is mode-independent
+
+    def test_secure_delete_suppresses_footer(self, make_file, capsys):
+        path = make_file('b.py', f'api_key = "{_AWS_KEY}"\n')
+        fix_all([_mk_finding(path, _AWS_KEY)], os.path.dirname(path),
+                Config(no_backup=False, secure_delete=True))
+        out = capsys.readouterr().out
+        assert 'SECURITY: .bak' not in out
+        assert not os.path.exists(path + '.bak')
+
+    def test_default_keeps_footer(self, make_file, capsys):
+        path = make_file('c.py', f'api_key = "{_AWS_KEY}"\n')
+        fix_all([_mk_finding(path, _AWS_KEY)], os.path.dirname(path),
+                Config(no_backup=False))
+        out = capsys.readouterr().out
+        assert 'SECURITY: .bak' in out
+
+    def test_secure_backup_dir_keeps_footer(self, make_file, tmp_dir, capsys):
+        # Plaintext backups still exist (moved into DIR) — suppressing the
+        # footer there would be fail-open messaging.
+        path = make_file('d.py', f'api_key = "{_AWS_KEY}"\n')
+        backup = os.path.join(tmp_dir, 'backups')
+        fix_all([_mk_finding(path, _AWS_KEY)], os.path.dirname(path),
+                Config(no_backup=False, secure_backup_dir=backup))
+        out = capsys.readouterr().out
+        assert 'SECURITY: .bak' in out
+
+
 class TestFixAllSummary:
     """#8: fix_all must report write/lookup FAILURES as 'failed', not 'skipped'."""
 

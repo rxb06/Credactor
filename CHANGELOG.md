@@ -57,6 +57,12 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
+- The post-redaction "SECURITY: .bak backup files contain original
+  credentials in PLAINTEXT" footer now reflects the backup mode. It printed
+  unconditionally — under `--no-backup` it warned about files that never
+  existed, and under `--secure-delete` it recommended the very flag in use.
+  It still prints for `--secure-backup-dir` (those backups are plaintext too,
+  just stored elsewhere), and the rotate/revoke reminder remains in every mode.
 - Lines longer than the 4096-character matching cap are now reported with a
   `[WARN]` naming the file (once per file, with a count). Content past the
   cap has never been pattern-matched — matching cost is superlinear in line
