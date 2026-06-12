@@ -57,6 +57,12 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
+- Lines longer than the 4096-character matching cap are now reported with a
+  `[WARN]` naming the file (once per file, with a count). Content past the
+  cap has never been pattern-matched — matching cost is superlinear in line
+  length, so the cap stays — but a secret at the end of a minified one-liner
+  previously scanned clean with no signal at all. The notice covers
+  working-tree, single-file, `--staged`, and `--scan-history` paths.
 - `--scan-history` now warns when the repository is deeper than its
   100-commit window. The truncated scan's all-clear was previously
   byte-identical to a fully-scanned clean repo — a secret introduced and

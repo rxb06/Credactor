@@ -571,6 +571,11 @@ detail; these are the behaviours most likely to surprise.)
   and removed earlier are out of scope; on a deeper repository a `[WARN]`
   says so. For full-history audits use a dedicated history scanner
   (e.g. `gitleaks git`), then remediate with Credactor.
+- **Lines are matched up to 4096 characters.** Matching cost grows
+  superlinearly with line length, so each line is truncated at 4096 chars
+  before pattern matching — a secret past that column (e.g. at the end of a
+  minified one-liner) is not detected. A `[WARN]` names every affected file;
+  the warning also fires for staged blobs and history scans.
 - **UTF-8 / Latin-1 only by default.** Other encodings (UTF-16, …) require the
   optional `charset-normalizer` / `chardet` extra; without it such files are read
   as Latin-1 and their secrets can be missed (Credactor prints a `[WARN]` when it

@@ -7,7 +7,47 @@ documentation.  They MUST NOT be redacted — add this directory to
 
 import pytest
 
-from credactor.scanner import scan_file, scan_line, should_scan_file
+from credactor.config import Config
+from credactor.scanner import (
+    _MAX_LINE_LENGTH,
+    scan_file,
+    scan_line,
+    scan_lines,
+    should_scan_file,
+)
+
+
+class TestLongLineTruncationWarning:
+    """Content past _MAX_LINE_LENGTH is not pattern-matched; the truncation
+    must be loud (once per file) instead of a silent false negative."""
+
+    _KEY = 'AKIA' + 'IOSFODNN7EXAMPLE'
+
+    def test_secret_past_cap_warns_once(self, credactor_caplog):
+        long_line = '# ' + 'x' * 5000 + f' aws = "{self._KEY}"\n'
+        findings = scan_lines('big.py', [long_line], config=Config(no_color=True))
+        # The cap itself is deliberate (hot-path cost is superlinear in line
+        # length) — the miss stays, but it is no longer silent.
+        assert findings == []
+        warns = [r for r in credactor_caplog.records
+                 if r.levelname == 'WARNING' and 'big.py' in r.getMessage()]
+        assert len(warns) == 1
+        assert str(_MAX_LINE_LENGTH) in warns[0].getMessage()
+
+    def test_secret_before_cap_found_without_warning(self, credactor_caplog):
+        findings = scan_lines('ok.py', [f'aws = "{self._KEY}"\n', 'x = 1\n'],
+                              config=Config(no_color=True))
+        assert [f for f in findings if f['full_value'] == self._KEY]
+        assert not [r for r in credactor_caplog.records
+                    if r.levelname == 'WARNING']
+
+    def test_multiple_long_lines_one_warning_with_count(self, credactor_caplog):
+        lines = ['# ' + 'x' * 5000 + '\n', '# ' + 'y' * 5000 + '\n', 'z = 1\n']
+        scan_lines('big2.py', lines, config=Config(no_color=True))
+        warns = [r for r in credactor_caplog.records
+                 if r.levelname == 'WARNING' and 'big2.py' in r.getMessage()]
+        assert len(warns) == 1
+        assert '2 line(s)' in warns[0].getMessage()
 
 
 # ---------------------------------------------------------------------------

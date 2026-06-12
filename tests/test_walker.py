@@ -261,6 +261,26 @@ class TestStagedScanning:
         assert not [r for r in credactor_caplog.records
                     if 'NOT scanned' in r.getMessage()]
 
+    def test_scan_history_warns_on_overlong_added_lines(self, tmp_dir, credactor_caplog):
+        # Same silent-FN class as the working-tree line cap: an added line
+        # longer than _MAX_LINE_LENGTH is truncated before matching, so the
+        # history pass must say so rather than scan clean silently.
+        repo = self._init_repo(tmp_dir)
+        env = dict(check=True, capture_output=True, cwd=repo)
+        subprocess.run(['git', 'config', 'user.email', 't@t'], **env)
+        subprocess.run(['git', 'config', 'user.name', 't'], **env)
+        key = 'AKIA' + 'IOSFODNN7EXAMPLE'
+        with open(os.path.join(repo, 'blob.py'), 'w') as f:
+            f.write('# ' + 'x' * 5000 + f' aws = "{key}"\n')
+        subprocess.run(['git', 'add', '-A'], **env)
+        subprocess.run(['git', 'commit', '-m', 'long'], **env)
+        findings = scan_git_history(repo, config=Config(no_color=True))
+        assert not [f for f in findings if f.get('full_value') == key]
+        warns = [r for r in credactor_caplog.records
+                 if r.levelname == 'WARNING' and 'exceeded' in r.getMessage()]
+        assert len(warns) == 1
+        assert '1 added line(s)' in warns[0].getMessage()
+
     def test_scan_history_line_and_commit_fields(self, tmp_dir):
         # The hand-parsed `git log -p` hunk headers must yield the real line
         # number, and each finding must carry the introducing commit's hash —

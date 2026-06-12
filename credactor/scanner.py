@@ -494,6 +494,18 @@ def scan_lines(
     if lines and lines[0].startswith('\ufeff'):
         lines[0] = lines[0][1:]
 
+    # scan_line truncates each line to _MAX_LINE_LENGTH before matching (the
+    # cost of matching is superlinear in line length), so a secret past that
+    # column is missed \u2014 say so once per file instead of scanning clean
+    # silently. Mirrors the truncation condition at scan_line exactly.
+    truncated = sum(1 for ln in lines if len(ln) > _MAX_LINE_LENGTH)
+    if truncated:
+        logger.warning(
+            '%s: %d line(s) longer than %d chars \u2014 content past that limit '
+            'was not scanned by per-line matching',
+            filepath, truncated, _MAX_LINE_LENGTH,
+        )
+
     # PEM private key block detection (multi-line)
     in_pem_block = False
     pem_block_lines = 0

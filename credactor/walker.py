@@ -15,7 +15,13 @@ from ._log import logger
 from .config import Config
 from .gitignore import matches_gitignore, parse_gitignore_file
 from .patterns import SKIP_DIRS, SKIP_FILES
-from .scanner import scan_file, scan_line, scan_lines, should_scan_file
+from .scanner import (
+    _MAX_LINE_LENGTH,
+    scan_file,
+    scan_line,
+    scan_lines,
+    should_scan_file,
+)
 from .suppressions import AllowList
 from .types import Finding
 from .utils import is_within_root
@@ -365,6 +371,7 @@ def scan_git_history(
     current_commit = ''
     current_file = ''
     diff_lineno = 0
+    long_added = 0
 
     for line in result.stdout.splitlines():
         if line.startswith('commit '):
@@ -385,6 +392,8 @@ def scan_git_history(
         if line.startswith('+') and not line.startswith('+++'):
             diff_lineno += 1
             added_line = line[1:]  # strip the leading '+'
+            if len(added_line) > _MAX_LINE_LENGTH:
+                long_added += 1
             line_findings = scan_line(diff_lineno, added_line,
                                       f'{current_file} (commit {current_commit})',
                                       config=config, allowlist=allowlist)
@@ -393,6 +402,15 @@ def scan_git_history(
             findings.extend(line_findings)
         elif not line.startswith('-'):
             diff_lineno += 1
+
+    if long_added:
+        # Same silent-FN class as scan_lines' per-file notice: scan_line
+        # truncates before matching, so content past the cap was not scanned.
+        logger.warning(
+            'history scan: %d added line(s) exceeded %d chars — content past '
+            'that limit was not scanned by per-line matching',
+            long_added, _MAX_LINE_LENGTH,
+        )
 
     return findings
 
