@@ -57,6 +57,16 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
+- `min_value_length` no longer gates deterministic critical patterns. The
+  PEM-header exemption is now keyed on severity, so AWS/GitHub/Stripe/…
+  provider tokens — whose regexes pin their own length — are found even at
+  `min_value_length = 200`, matching the exemption `entropy_threshold` has
+  always had. Previously a user raising the knob to cut hex noise silently
+  disabled all critical provider-prefix detection for tokens shorter than
+  the limit. **Note on upgrade:** a tuned config that relied on a large
+  `min_value_length` to silence placeholder provider keys will see those
+  flag again (suppress via `.credactorignore`/`extra_safe_values`). At the
+  default of 8 nothing changes.
 - Prefixed API-key variable names (`test_api_key`, `my_api_key`,
   `aws_api_key`, `stripe_api_key`, `sendgrid_apikey`, …) are now detected.
   The manual has always stated that safe values match by *value* — "a real

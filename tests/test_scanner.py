@@ -17,6 +17,37 @@ from credactor.scanner import (
 )
 
 
+class TestMinValueLengthCriticalExemption:
+    """min_value_length gates heuristic/assignment values only: deterministic
+    critical provider patterns pin their own length in the regex, mirroring
+    the entropy-floor exemption they already have. A user raising the knob to
+    cut hex noise must not silently disable AWS/GitHub/Stripe detection."""
+
+    _GHP = 'ghp_' + 'x9Kp2mQv8rT4wYbN7jHs3fLd6gZc1aEu'
+
+    def test_provider_token_found_at_min_value_length_200(self):
+        cfg = Config(no_color=True, min_value_length=200)
+        findings = scan_line(1, f'gh = "{self._GHP}"', 'a.py', config=cfg)
+        assert [f for f in findings if f['type'] == 'pattern:GitHub token'
+                and f['severity'] == 'critical']
+
+    def test_provider_token_in_triple_quoted_block_found_at_200(self):
+        # The multiline pass shares the exemption — both call sites move
+        # together or the staged-parity guarantee re-drifts.
+        cfg = Config(no_color=True, min_value_length=200)
+        lines = ['doc = """\n', f'old key: {self._GHP}\n', '"""\n']
+        findings = scan_lines('a.py', lines, config=cfg)
+        assert [f for f in findings if 'GitHub token' in f['type']]
+
+    def test_heuristic_assignment_still_gated_at_200(self):
+        # The knob keeps doing its documented job for non-deterministic
+        # values: a generic password assignment is suppressed at 200.
+        cfg = Config(no_color=True, min_value_length=200)
+        findings = scan_line(1, 'password = "vN8kQz2wXr5LmP9jT4bYc6Fd"',
+                             'a.py', config=cfg)
+        assert findings == []
+
+
 class TestPrefixedApiKeyVariable:
     """Manual: safe values 'match by value: a real secret in a variable
     merely *named* test_api_key is still flagged' — which requires the

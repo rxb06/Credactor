@@ -360,7 +360,7 @@ Verified keys:
 | Key | Effect |
 |-----|--------|
 | `entropy_threshold` | Float 0.0–6.0 (default 3.5). Does **not** apply to deterministic provider prefixes — verified: `entropy_threshold = 6.0` still finds a `ghp_…` token. |
-| `min_value_length` | Int 1–200 (default 8). Verified: `min_value_length = 200` suppresses a 40-char token (0 findings). |
+| `min_value_length` | Int 1–200 (default 8). Like `entropy_threshold`, does **not** apply to deterministic provider prefixes or PEM blocks (their regexes pin their own length — a `ghp_…` token is found even at 200); gates heuristic and assignment values only. Verified: a generic password assignment is suppressed at 200. |
 | `skip_dirs` | List of directory names to skip (case-sensitive). |
 | `skip_files` | List of file names to skip. Verified: `skip_files = ["app.py"]` → 0 findings. |
 | `extra_extensions` | List of extra extensions to scan (lowercased; warn if a leading dot is missing). |
@@ -375,7 +375,7 @@ sensitivity).
 ### `--config PATH`
 
 Use a specific config file (verified: `--config cfg.toml` with
-`min_value_length = 200` drops findings to 0). An explicit `--config` is honored
+`min_value_length = 200` suppresses a generic password assignment). An explicit `--config` is honored
 even outside the project root (non-CI). A `--config` path that does not exist
 (or is not a file) is a **fatal error, exit 2** — it is never silently ignored.
 

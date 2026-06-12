@@ -245,8 +245,8 @@ def _evaluate_candidate(
     Order (identical across all scan passes): safe-value heuristic -> minimum
     length -> entropy floor -> allowlist. The ``floor > 0`` short-circuit is
     load-bearing: VALUE_PATTERNS provider keys pass ``floor=0.0`` and must NOT
-    acquire an entropy gate. ``allow_short`` skips the length check (private-key
-    headers). ``safe_values`` is the pre-merged safe set (#34).
+    acquire an entropy gate. ``allow_short`` skips the length check (deterministic
+    critical-severity patterns, whose regexes pin their own length). ``safe_values`` is the pre-merged safe set (#34).
     """
     if _is_safe_value(val, safe_values=safe_values, skip_dotted_access=skip_dotted_access):
         logger.debug('%s:%d suppressed by safe value heuristic', filepath, lineno)
@@ -336,7 +336,7 @@ def scan_line(
                 filepath=filepath, lineno=lineno,
                 allowlist=allowlist,
                 skip_dotted_access=(label == 'JWT token'),
-                allow_short=(label == 'private key header'),
+                allow_short=(severity == 'critical'),
                 safe_values=safe_set)
             if accepted is None:
                 continue
@@ -599,7 +599,7 @@ def _scan_multiline_strings(
                             val, min_len=min_len, floor=min_ent,
                             filepath=filepath, lineno=block_lineno,
                             allowlist=allowlist,
-                            allow_short=(label == 'private key header'),
+                            allow_short=(severity == 'critical'),
                             safe_values=safe_set) is None:
                         continue
                     existing_findings.append(_make_finding(
