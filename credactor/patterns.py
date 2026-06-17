@@ -25,7 +25,7 @@ SCAN_EXTENSIONS = {
     '.xml',
     '.pem', '.key', '.crt',           # M1: standalone PEM / key / cert files
     '.txt',  # notes/scratch files — measured clean on prose and
-             # sha256-pinned requirements; a real leak vector (2.5.0)
+             # sha256-pinned requirements; a real leak vector (2.4.1)
 }
 
 # M1: extensionless private-key files, matched by name in should_scan_file.
