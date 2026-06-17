@@ -534,6 +534,27 @@ class TestTrufflehogBasicFinding:
         assert len(results) == 1
         assert any('invalid' in r.message.lower() for r in credactor_caplog.records)
 
+    def test_trufflehog_wholly_unparseable_raises(self, tmp_path):
+        # MV-6: a non-empty report with NO valid JSON object on any line (garbage,
+        # an HTML error page, truncated braces) is a malformed report, not a clean
+        # "no findings" result — fail closed like the Gitleaks path, never a silent
+        # zero-findings success. (An empty / blank-only file stays a valid no-op.)
+        target, _ = _make_th_target(tmp_path)
+        report = tmp_path / 'bad.json'
+        report.write_text('this is not json\n<html>404</html>\n{ unclosed\n',
+                          encoding='utf-8')
+        with pytest.raises(ValueError, match='NDJSON'):
+            ingest_trufflehog(str(report), str(target))
+
+    def test_trufflehog_json_array_raises(self, tmp_path):
+        # A Gitleaks-style JSON array fed to --from-trufflehog: valid JSON but no
+        # per-line object — the wrong file, must fail closed (was silently []).
+        target, _ = _make_th_target(tmp_path)
+        report = tmp_path / 'arr.json'
+        report.write_text(json.dumps([_make_trufflehog_finding()]), encoding='utf-8')
+        with pytest.raises(ValueError, match='NDJSON'):
+            ingest_trufflehog(str(report), str(target))
+
 
 class TestTrufflehogSourceTypes:
     def test_trufflehog_git_source(self, tmp_path):

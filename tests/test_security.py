@@ -712,6 +712,51 @@ class TestUnconfirmedEncodingWarns:
 
         assert exc.value.code == 0  # errored-but-warned, not found, not fatal
 
+    def test_truncated_utf16le_not_misdetected_as_utf8_with_detectors(
+        self, tmp_path
+    ):
+        # MV-1: with the [encoding] extra installed, charset_normalizer.best()
+        # returns 'utf_8' for a truncated / odd-length UTF-16LE file (its
+        # NUL-interleaved bytes are valid UTF-8). That verdict short-circuited
+        # the UTF-16 signature check and silently dissolved the secret into
+        # mojibake. A utf-8/ascii verdict on NUL-bearing bytes must not be
+        # trusted — genuine UTF-8/ASCII never contains NUL.
+        pytest.importorskip('charset_normalizer')
+        p = tmp_path / 'trunc.py'
+        p.write_bytes('aws_key = "AKIA4HJR6WPT3XLQ8NVB"\n'.encode('utf-16-le')[:-1])
+
+        enc = detect_encoding(str(p))
+
+        assert enc.replace('_', '-').lower().startswith('utf-16')  # not 'utf-8'
+
+    def test_truncated_utf16be_not_misdetected_as_utf8_with_detectors(
+        self, tmp_path
+    ):
+        pytest.importorskip('charset_normalizer')
+        p = tmp_path / 'trunc.py'
+        p.write_bytes('aws_key = "AKIA4HJR6WPT3XLQ8NVB"\n'.encode('utf-16-be')[:-1])
+
+        enc = detect_encoding(str(p))
+
+        assert enc.replace('_', '-').lower().startswith('utf-16')  # not 'utf-8'
+
+    def test_truncated_utf16_errored_with_detectors_not_silent(
+        self, tmp_path, credactor_caplog
+    ):
+        # The manual's promise (lines 326-328: "never a silent all-clear") must
+        # hold in the [encoding]-extra config too, not only on a stock install:
+        # a truncated UTF-16 file is errored and warned, and --fail-on-error
+        # makes it exit 2 — not a clean exit-0 [OK] that misses the secret.
+        pytest.importorskip('charset_normalizer')
+        p = tmp_path / 'trunc.py'
+        p.write_bytes('aws_key = "AKIA4HJR6WPT3XLQ8NVB"\n'.encode('utf-16-le')[:-1])
+
+        with pytest.raises(SystemExit) as exc:
+            main(['--dry-run', '--fail-on-error', str(tmp_path)])
+
+        assert exc.value.code == 2
+        assert any('trunc.py' in r.getMessage() for r in credactor_caplog.records)
+
     def test_utf32_falls_back_to_latin1_and_warns(
         self, tmp_path, monkeypatch, credactor_caplog
     ):

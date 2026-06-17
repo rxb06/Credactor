@@ -91,17 +91,30 @@ def detect_encoding(filepath: str) -> str:
     if raw.isascii() and b'\x00' not in raw:
         return 'utf-8'
 
+    # Genuine UTF-8/ASCII never contains NUL, but charset_normalizer/chardet
+    # mis-report a truncated or odd-length UTF-16 file as utf-8 on its
+    # NUL-interleaved bytes. Trusting that verdict short-circuits the UTF-16
+    # signature / latin-1 checks below and silently dissolves the secret into
+    # mojibake no pattern can match (MV-1). So a utf-8/ascii verdict on
+    # NUL-bearing bytes is distrusted here and left to those checks. (Valid
+    # UTF-16 answers utf-16-*, UTF-32 answers utf-32 — both still trusted.)
+    nul = b'\x00' in raw
+
     # Try charset_normalizer (lighter, no C deps)
     if charset_normalizer is not None:
         result = charset_normalizer.from_bytes(raw).best()
         if result and result.encoding:
-            return str(result.encoding)
+            enc = str(result.encoding)
+            if not (nul and enc.replace('_', '-').lower() in ('utf-8', 'ascii')):
+                return enc
 
     # Try chardet
     if chardet is not None:
         det = chardet.detect(raw)
         if det and det.get('encoding') and det.get('confidence', 0) > 0.7:
-            return str(det['encoding'])
+            enc = str(det['encoding'])
+            if not (nul and enc.replace('_', '-').lower() in ('utf-8', 'ascii')):
+                return enc
 
     variant = utf16_variant(raw)
     if variant:

@@ -515,6 +515,16 @@ def _collect_findings(
     # yields nothing, so routing a file target through walk_and_scan silently
     # finds zero. scan_file does not gate on extension (the user named it).
     if Path(target).is_file():
+        # MV-2: a .credactorignore loads only for a directory scan (its root is
+        # the scanned dir), so a single-file target applies none. Warn when one
+        # sits beside the file rather than letting its suppressions silently fail
+        # to apply — inline "# credactor:ignore" still works on a file target.
+        if (Path(target).resolve().parent / '.credactorignore').is_file():
+            logger.warning(
+                '.credactorignore is not applied to a single-file target — its '
+                'entries load only for a directory scan. Use inline '
+                '"# credactor:ignore", or scan the directory.'
+            )
         try:
             return scan_file(target, config=config, allowlist=allowlist), []
         except (OSError, UnicodeDecodeError) as exc:

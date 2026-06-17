@@ -292,6 +292,28 @@ class TestNoLeakOnRepeatedValue:
         assert 'timeout = 123456789' in out      # the adjacent number is untouched
         compile(out, 'emb.py', 'exec')
 
+    def test_sweep_redacts_value_in_nonword_bounded_token(self, make_file):
+        # Documented boundary of the word-anchor protection: a copy of the
+        # exact secret inside a LARGER token bounded by a non-word char
+        # (-, ., @, =, /) IS swept. That is over-redaction, not under: it fails
+        # safe (the .bak keeps the original; the result over-redacts, never
+        # leaks). Pinned so the boundary cannot shift silently. Contrast
+        # test_sweep_skips_substring_of_larger_token, where a \w-adjacent
+        # substring (123456789) stays protected.
+        config = Config(no_backup=True, replace_mode='sentinel')
+        path = make_file(
+            'tok.py',
+            f'api_key = "{self._SECRET}"\n'        # line 1: the reported finding
+            f'name = "{self._SECRET}-extended"\n'  # line 2: hyphen-bounded copy
+            f'backup = "{self._SECRET}.bak"\n')    # line 3: dot-bounded copy
+        batch_replace_in_file(path, [_mk_finding(path, self._SECRET, line=1)], config)
+        with open(path) as f:
+            out = f.read()
+        assert self._SECRET not in out                  # every literal copy is gone
+        assert 'REDACTED_BY_CREDACTOR-extended' in out  # larger token's prefix swept
+        assert 'REDACTED_BY_CREDACTOR.bak' in out
+        compile(out, 'tok.py', 'exec')
+
     def test_distinct_values_both_replaced(self, make_file):
         # the sweep must not interfere with the normal two-findings case
         s1, s2 = 'aaa1bbb2ccc3ddd4', 'zzz9yyy8xxx7www6'

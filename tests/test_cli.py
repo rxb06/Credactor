@@ -920,3 +920,61 @@ class TestScanJsonEndToEnd:
         out = capsys.readouterr().out
         assert 'Selection' not in out        # no picker prompt
         assert 'INTERACTIVE REDACTION' in out  # went straight to review
+
+
+class TestCredactorignoreFileTarget:
+    """MV-2: .credactorignore loads only for a directory scan (its root is the
+    scanned dir). A single-file target never applies one, so warn when an ignore
+    file sits beside the target instead of suppressing nothing silently."""
+
+    _KEY = 'AKIA4HJR6WPT3XLQ8NVB'
+
+    def test_file_target_warns_credactorignore_inert(
+        self, make_file, tmp_dir, credactor_caplog
+    ):
+        # The glob would suppress this file on a DIR scan (-> 0), but is inert
+        # for the file target (finding stays -> exit 1). The miss must not be
+        # silent: a default-visible WARN names it.
+        path = make_file('app.py', f'aws_key = "{self._KEY}"\n')
+        Path(tmp_dir, '.credactorignore').write_text('app.py\n', encoding='utf-8')
+
+        with pytest.raises(SystemExit) as exc:
+            main(['--dry-run', path])
+
+        assert exc.value.code == 1   # NOT suppressed — proves the inertness
+        assert any(
+            'single-file target' in r.getMessage() and r.levelname == 'WARNING'
+            for r in credactor_caplog.records
+        )
+
+    def test_file_target_no_warn_without_ignore_file(
+        self, make_file, credactor_caplog
+    ):
+        # No .credactorignore present -> no spurious warning on a normal scan.
+        path = make_file('app.py', f'aws_key = "{self._KEY}"\n')
+
+        with pytest.raises(SystemExit) as exc:
+            main(['--dry-run', path])
+
+        assert exc.value.code == 1
+        assert not any(
+            'single-file target' in r.getMessage()
+            for r in credactor_caplog.records
+        )
+
+    def test_dir_target_applies_credactorignore_and_no_warn(
+        self, make_file, tmp_dir, credactor_caplog
+    ):
+        # The directory scan still loads and applies .credactorignore (-> 0) and
+        # does NOT emit the single-file-target warning.
+        make_file('app.py', f'aws_key = "{self._KEY}"\n')
+        Path(tmp_dir, '.credactorignore').write_text('app.py\n', encoding='utf-8')
+
+        with pytest.raises(SystemExit) as exc:
+            main(['--dry-run', tmp_dir])
+
+        assert exc.value.code == 0   # suppressed by the glob
+        assert not any(
+            'single-file target' in r.getMessage()
+            for r in credactor_caplog.records
+        )

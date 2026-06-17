@@ -181,10 +181,8 @@ def _parse_toml(path: Path, *, fatal: bool = False) -> TomlData:
     the explicit-path guards exist to prevent. With ``fatal=False`` (implicit
     discovery) a stray malformed config warns and is skipped.
 
-    Callers must gate on ``Path.is_file()`` first: it is load-bearing for
-    non-regular-file safety (a FIFO would block this ``open()`` forever). Both
-    entry points do — the implicit walk's ``candidate.is_file()`` and the CLI's
-    explicit-path guard — so a pipe/socket never reaches here.
+    Callers must gate on ``Path.is_file()`` first (a FIFO would block this
+    ``open()`` forever); both entry points do.
     """
     import tomllib
     try:

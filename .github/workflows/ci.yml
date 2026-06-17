@@ -11,9 +11,10 @@ permissions:
   actions: read
   security-events: write
 
-# One run per ref: a PR from develop to main would otherwise run the full
-# matrix twice per commit (push + pull_request), and stacked pushes would
-# leave stale runs burning Windows runner minutes.
+# Cancel superseded runs on the same ref: re-pushing to a branch (or a PR
+# head) aborts the in-flight run so stale jobs stop burning Windows runner
+# minutes. (push and pull_request resolve to different github.ref values, so
+# a PR still gets a separate push run and pull_request run — both groups stand.)
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

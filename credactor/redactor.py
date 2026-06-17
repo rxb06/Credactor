@@ -345,8 +345,11 @@ def _sweep_stray_copies(
     if not values:
         return
     # One compiled alternation (longest value first so a short value can't
-    # shadow a longer one). Word-boundary anchors keep us from corrupting a
-    # substring of a larger token like 123456789. The replacement is a
+    # shadow a longer one). Word-boundary anchors protect a secret embedded in
+    # a larger *word* token (123456789), but a copy bounded by a non-word char
+    # (secret-extended, secret.bak) is still swept — fail-safe over-redaction
+    # pinned by test_sweep_redacts_value_in_nonword_bounded_token. The
+    # replacement is a
     # function so a custom string with backreference-like text (e.g. '\\1')
     # is inserted literally, not as a regex template. On the finding's own
     # line the literal is already gone (replaced above), so re.subn is a

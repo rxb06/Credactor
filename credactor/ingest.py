@@ -525,12 +525,15 @@ def ingest_trufflehog(
 
     findings: list[Finding] = []
     count = 0
+    saw_content = False   # any non-blank line
+    saw_object = False    # any line that parsed to a JSON object
 
     with fh:
         for lineno_file, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
                 continue
+            saw_content = True
 
             try:
                 obj = json.loads(line)
@@ -547,6 +550,7 @@ def ingest_trufflehog(
                     lineno_file,
                 )
                 continue
+            saw_object = True
 
             if count >= _MAX_FINDINGS:
                 logger.warning(
@@ -561,6 +565,18 @@ def ingest_trufflehog(
 
             findings.append(finding)
             count += 1
+
+    # MV-6: a report with content but not a single JSON object on any line is a
+    # malformed report (garbage, an HTML error page, or a Gitleaks JSON array fed
+    # to the NDJSON path), not a clean "no findings" result. Fail closed like
+    # ingest_gitleaks rather than returning [] — a silent zero-findings exit 0 on
+    # a wrong/typo'd report is a false all-clear. An empty / blank-only file is a
+    # legitimate "no findings" (saw_content False) and still returns [].
+    if saw_content and not saw_object:
+        raise ValueError(
+            f'TruffleHog file {filepath!r} is not valid NDJSON: '
+            f'no JSON object found on any non-empty line.'
+        )
 
     return findings
 
