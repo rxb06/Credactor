@@ -10,7 +10,7 @@ version may happen in a **minor** release. Such a drop is always flagged
 below the release that dropped it (2.4.0 dropped Python 3.10, so:
 `credactor<2.4`).
 
-## [Unreleased]
+## [2.4.1] - 2026-06-17
 
 ### Changed (behaviour)
 
@@ -562,7 +562,7 @@ superseded. Resolvers will only select **2.3.3** (the last release supporting
 Python 3.10 — see the versioning note above) or **2.4.0+**; yanked versions
 remain installable solely via exact `==` pins.
 
-[Unreleased]: https://github.com/rxb06/Credactor/compare/v2.4.0...HEAD
+[2.4.1]: https://github.com/rxb06/Credactor/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/rxb06/Credactor/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/rxb06/Credactor/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/rxb06/Credactor/compare/v2.3.0...v2.3.2
