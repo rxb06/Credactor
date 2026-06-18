@@ -89,10 +89,14 @@ _MAX_LINE_LENGTH = 4096
 # Cap multiline block size to prevent ReDoS on huge triple-quoted strings.
 _MAX_BLOCK_SIZE = 8192
 
-# Line-level context check: if the line assigns to a hash/digest variable,
-# hex values on that line are likely hash outputs, not raw credentials
+# Line-level context check: a hex/base64 value on a line keyed like a
+# hash/digest/checksum/commit/integrity/revision field is a hash output, not a
+# raw credential, so the quoted hex/Base64 value detectors skip it. S3: the
+# widened name set stops --fix-all auto-rewriting commit SHAs, SRI integrity
+# hashes, and checksums (which would silently corrupt code).
 _HASH_CONTEXT_RE = re.compile(
-    r'(?:_hash|_hashed|_digest|_checksum|_fingerprint|_hmac|sha\d+|md5)\s*[:=]',
+    r'(?:_hash|_hashed|_digest|_checksum|_fingerprint|_hmac|sha\d+|md5'
+    r'|commit|integrity|checksum|digest|rev|sri)\s*[:=]',
     re.IGNORECASE,
 )
 

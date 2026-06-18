@@ -168,7 +168,9 @@ _PYPI_RE = re.compile(r'\bpypi-[0-9a-zA-Z_-]{16,}\b')
 
 # #17 – Connection strings with embedded credentials (scheme://user:pass@host)
 _CONN_STRING_RE = re.compile(
-    r'[a-zA-Z][a-zA-Z0-9+.-]*://[^:@\s]+:[^@\s]+@[^\s"\']{3,}'
+    # S4: bounded runs (no unbounded '+') keep matching linear, not O(n^2), on
+    # adversarial input — the credential parts of a real URL are short.
+    r'[a-zA-Z][a-zA-Z0-9+.-]{0,30}://[^:@\s]{1,256}:[^@\s]{1,256}@[^\s"\']{3,256}'
 )
 
 # #18 – PEM private key header

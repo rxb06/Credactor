@@ -269,3 +269,24 @@ class TestSuppressPattern:
 
     def test_no_match(self):
         assert not SUPPRESS_RE.search('api_key = "secret"  # this is fine')
+
+
+class TestConnStringReDoS:
+    """S4: the connection-string regex must be linear, not O(n^2)."""
+
+    def test_real_connection_strings_still_match(self):
+        for conn in (
+            'postgresql://admin:s3cretP' + '@ss@db.host.com:5432/mydb',
+            'mongodb+srv://user:p4ssw0rd' + '@cluster.mongodb.net/db',
+            'redis://default:mypassword' + '@redis.host.io:6379',
+        ):
+            assert _CONN_STRING_RE.search(conn)
+
+    def test_adversarial_input_is_bounded(self):
+        import time
+        # long no-@ runs separated by ':' -> O(n^2) on an unbounded regex.
+        line = 'http://' + 'a' * 16000 + ':' + 'b' * 16000
+        t = time.perf_counter()
+        _CONN_STRING_RE.search(line)
+        elapsed = time.perf_counter() - t
+        assert elapsed < 0.1, f'{elapsed*1000:.0f}ms - regex is not bounded'

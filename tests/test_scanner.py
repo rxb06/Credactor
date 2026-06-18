@@ -730,3 +730,31 @@ class TestDynamicLookupAuditTrail:
         scan_line(1, 'password = config.get("db_pass", "summer2024")', 'f.py')
         assert any('runtime/dynamic lookup' in r.message
                    for r in credactor_caplog.records)
+
+
+class TestHashContextWidened:
+    """S3: quoted hex/base64 on a line keyed like a commit/checksum/integrity/
+    digest field is treated as a hash, not a credential — so --fix-all does not
+    corrupt it. A generic-named quoted hash-shaped value still flags."""
+
+    _HEX40 = 'a1b2c3d4' + 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0'   # 40-char hex
+
+    def test_hash_keyed_lines_not_flagged(self):
+        cfg = Config(no_color=True)
+        for line in (
+            f'commit = "{self._HEX40}"',
+            f'git_commit = "{self._HEX40}"',
+            f'GIT_REV = "{self._HEX40}"',
+            f'checksum = "{self._HEX40}"',
+            f'digest = "{self._HEX40}"',
+            f'integrity = "{self._HEX40}"',
+        ):
+            findings = scan_line(1, line, 'f.py', config=cfg)
+            assert findings == [], line
+
+    def test_generic_named_quoted_hash_still_flagged(self):
+        # over-suppression guard: a generic var still flags (entropy cannot
+        # distinguish a hash-shaped value from a real secret).
+        cfg = Config(no_color=True)
+        findings = scan_line(1, f'data = "{self._HEX40}"', 'f.py', config=cfg)
+        assert any(f['type'] == 'pattern:hex credential' for f in findings)
