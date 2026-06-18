@@ -163,6 +163,33 @@ class TestSarifReport:
         assert 'startColumn' not in region
         assert 'endColumn' not in region
 
+    def test_sarif_declares_codepoint_columns(self):
+        """S13: columns are computed with str.find/len (codepoints), but SARIF
+        2.1.0 defaults to utf16CodeUnits when columnKind is absent — GitHub then
+        mis-highlights astral-plane chars. Declare unicodeCodePoints so the
+        existing columns are interpreted correctly."""
+        findings = [{
+            'file': '/tmp/test.py', 'line': 1, 'type': 'variable:api_key',
+            'severity': 'high', 'full_value': _AWS_KEY, 'value_preview': _AWS_KEY,
+            'raw': f'api_key = "{_AWS_KEY}"',
+        }]
+        result = json.loads(sarif_report(findings, '/tmp'))
+        assert result['runs'][0]['columnKind'] == 'unicodeCodePoints'
+
+    def test_sarif_columns_are_codepoint_offsets(self):
+        """Guard for the declaration above: a non-BMP char before the secret is
+        1 codepoint (2 UTF-16 units), so startColumn is the codepoint offset —
+        consistent with the declared unicodeCodePoints, not UTF-16 units."""
+        raw_line = f'x = "\U0001F511" ; api_key = "{_AWS_KEY}"'
+        findings = [{
+            'file': '/tmp/test.py', 'line': 1, 'type': 'variable:api_key',
+            'severity': 'high', 'full_value': _AWS_KEY, 'value_preview': _AWS_KEY,
+            'raw': raw_line,
+        }]
+        result = json.loads(sarif_report(findings, '/tmp'))
+        region = result['runs'][0]['results'][0]['locations'][0]['physicalLocation']['region']
+        assert region['startColumn'] == raw_line.find(_AWS_KEY) + 1
+
 
 class TestPrintGitignoreSkipped:
     def test_writes_to_configurable_stream(self, tmp_path):

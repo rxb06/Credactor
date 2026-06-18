@@ -219,6 +219,11 @@ def sarif_report(findings: list[Finding], root: str) -> str:
                     'rules': list(rules.values()),
                 },
             },
+            # S13: startColumn/endColumn are computed with str.find/len, i.e.
+            # Unicode code points. SARIF 2.1.0 defaults to utf16CodeUnits when
+            # columnKind is absent, so GitHub would mis-highlight any line with
+            # astral-plane chars before the secret. Declare the actual unit.
+            'columnKind': 'unicodeCodePoints',
             'results': results,
         }],
     }
