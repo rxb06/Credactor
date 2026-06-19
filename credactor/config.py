@@ -20,6 +20,11 @@ ENTROPY_DEFAULT: float = 3.5
 MIN_LEN_BOUNDS: tuple[int, int] = (1, 200)
 MIN_LEN_DEFAULT: int = 8
 
+# The fixed, always-syntactically-safe sentinel: the default custom_replacement,
+# and the fallback the redactor falls back to when an env/custom replacement
+# would break the surrounding code. Single source so the sites cannot drift.
+DEFAULT_REPLACEMENT = 'REDACTED_BY_CREDACTOR'
+
 # Parsed-TOML config shape.
 TomlData = dict[str, Any]
 
@@ -69,7 +74,7 @@ class Config:
     fail_on_error: bool = False
     verbose: bool = False
     replace_mode: str = 'sentinel'  # 'sentinel' | 'env' | 'custom'
-    custom_replacement: str = 'REDACTED_BY_CREDACTOR'
+    custom_replacement: str = DEFAULT_REPLACEMENT
     output_format: str = 'text'  # 'text' | 'json' | 'sarif'
     target: str = '.'
     config_path: str | None = None

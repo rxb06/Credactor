@@ -100,6 +100,11 @@ _HASH_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The two entropy-based value detectors share the same extra guards (path/slash +
+# quote-prefix, then hash-context suppression). Named once so the guard block and
+# its membership test cannot drift apart.
+_HEURISTIC_VALUE_LABELS = ('hex credential', 'high-entropy string')
+
 # POSIX env var name — used by the bare $VAR safe-value check.
 _ENV_VAR_NAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
@@ -318,16 +323,14 @@ def scan_line(
         for match in pattern.finditer(line):
             val = match.group(0)
 
-            # high-entropy / hex credential: additional path/slash guard
-            if label in ('high-entropy string', 'hex credential'):
+            # high-entropy / hex credential value detectors: a path/slash +
+            # quote-prefix guard, then suppression when the line keys a hash.
+            if label in _HEURISTIC_VALUE_LABELS:
                 if val.count('/') > 2:
                     continue
                 start = match.start()
                 if start == 0 or line[start - 1] not in ('"', "'"):
                     continue
-
-            # hex/high-entropy: skip if line contains a hash/digest variable
-            if label in ('hex credential', 'high-entropy string'):
                 if hash_context is None:
                     hash_context = bool(_HASH_CONTEXT_RE.search(line))
                 if hash_context:

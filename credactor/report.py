@@ -47,11 +47,11 @@ def _c(text: str, color: str, *, use_color: bool = True) -> str:
     return f'{code}{text}{_COLORS["reset"]}' if code else text
 
 
-def _should_use_color(no_color: bool) -> bool:
-    """Determine whether to use ANSI color output."""
+def _should_use_color(no_color: bool, stream: TextIO = sys.stdout) -> bool:
+    """Determine whether to use ANSI color output on *stream*."""
     if no_color:
         return False
-    return sys.stdout.isatty()
+    return stream.isatty()
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ def print_report(
     """
     if not findings:
         return
-    color = _should_use_color(no_color)
+    color = _should_use_color(no_color, stream)
     root_path = Path(root).resolve()
     by_file = group_by_file(findings)
 
@@ -252,7 +252,7 @@ def print_gitignore_skipped(skipped: list[str], root: str, *, no_color: bool = F
     if not skipped:
         return
     root_path = Path(root).resolve()
-    color = _should_use_color(no_color)
+    color = _should_use_color(no_color, stream)
     print(_c(f'\n  [{len(skipped)} file(s) not scanned -- covered by .gitignore]',
              'dim', use_color=color), file=stream)
     for s in sorted(skipped):

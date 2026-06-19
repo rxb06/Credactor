@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from ._log import logger
-from .config import Config
+from .config import DEFAULT_REPLACEMENT, Config
 from .types import Finding
 from .utils import (
     detect_encoding,
@@ -132,7 +132,7 @@ def _replace_quoted(original: str, full_value: str, replacement: str) -> str:
             if other in replacement and other in original.replace(token, '', 1):
                 break
             return original.replace(token, replacement, 1)
-    return original.replace(full_value, 'REDACTED_BY_CREDACTOR', 1)
+    return original.replace(full_value, DEFAULT_REPLACEMENT, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +358,7 @@ def _sweep_stray_copies(
     whose own adjudication — an explicit interactive skip, a pending prompt,
     or a failed replacement — owns them. Scope is bounded to this one file.
     """
-    stray = ('REDACTED_BY_CREDACTOR' if config.replace_mode == 'env'
+    stray = (DEFAULT_REPLACEMENT if config.replace_mode == 'env'
              else config.custom_replacement)
     values = {f['full_value'] for f in file_findings if f['full_value']}
     if not values:
