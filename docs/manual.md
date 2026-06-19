@@ -509,11 +509,21 @@ locations. Verified — each of the following yields 0 findings:
   name ends in `_hash`, `_hashed`, `_digest`, `_checksum`, `_fingerprint`,
   `_hmac`, `_encrypted`, or `_cipher` (e.g. `secret_hash`). (2) Hash *values*
   (`$2b$…` bcrypt, `$argon2id$…`). (3) A quoted hex / high-entropy **value** on
-  a line keyed like a digest — a key ending in one of those `_hash`-family
-  suffixes, or being `md5` / `sha<digits>` (`md5 = "<hex>"`, `sha256: <hex>`).
-  Case 3 gates the **value** detector only: it is not an open `sha*` / `md5*`
-  prefix (`md5sum`, `shasum`, bare `sha`, `sha256_value` still flag), and it
-  does **not** override a credential keyword — `secret_md5 = "…"` is flagged.
+  a line whose key names a hash/digest/checksum/commit/integrity/revision
+  field. The key may end in a `_hash`-family suffix, or contain `md5`,
+  `sha<digits>`, `commit`, `integrity`, `checksum`, `digest`, `rev`, or `sri`
+  before the `=`/`:` (`md5 = "<hex>"`, `git_commit = "<sha>"`,
+  `integrity: "sha384-…"`). The `sha`/`md5` forms need the keyword *immediately*
+  before the delimiter (`md5sum`, `shasum`, bare `sha`, `sha256_value` still
+  flag); the bare words match as substrings, so they also catch names merely
+  containing them (`my_rev`, `precommit`). Case 3 gates the **value** detector
+  only — it does **not** override a credential keyword (`secret_md5 = "…"` still
+  flags) or a deterministic provider pattern (`rev = "AKIA…"` still flags).
+  **Trade-off — false negative:** a *genuine* bare-hex / high-entropy secret in
+  such a field (an HMAC in `integrity = "<hex>"`, a token in a `*_rev` variable)
+  is **not** caught by the entropy detectors — the deliberate cost of not
+  corrupting commit SHAs / SRI integrity hashes / lockfile checksums under
+  `--fix-all`. `--dry-run` and allowlist if you keep raw secrets in such fields.
 - **Non-credential shapes** — file paths, credential-free URLs, values under 8
   characters, and low-entropy values.
 
