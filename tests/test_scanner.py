@@ -859,3 +859,61 @@ class TestHashContextWidened:
         cfg = Config(no_color=True)
         findings = scan_line(1, f'data = "{self._HEX40}"', 'f.py', config=cfg)
         assert any(f['type'] == 'pattern:hex credential' for f in findings)
+
+
+class TestHashContextCredentialKeyVeto:
+    """SCAN-1 regression: the widened hash-context terms (commit/rev/sri/...) must
+    NOT silently suppress the hex/base64 detector for credential-keyed names that
+    merely end in a hash-ish suffix (api_key_rev, token_rev, ...) — a credential
+    keyword in the key takes precedence, so those still flag as on origin/main.
+    And the suppression is scoped to the matched value's own key, so a hash key on
+    one part of a multi-assignment line cannot suppress an unrelated secret."""
+
+    _HEX32 = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6'  # 32-char hex
+
+    def test_credential_keyed_hash_suffix_still_flags(self):
+        # These were silently MISSED on develop (the FN regression) but flag on
+        # origin/main: a credential keyword in the key must veto the hash-context
+        # suppression so a real hex secret is not dropped.
+        cfg = Config(no_color=True)
+        for var in (
+            'api_key_rev',
+            'token_rev',
+            'private_key_rev',
+            'oauth_token_sri',
+            'password_rev',
+            'apikey_sri',
+            'api_key_commit',
+            'token_integrity',
+            'auth_token_rev',
+        ):
+            line = f'{var} = "{self._HEX32}"'
+            findings = scan_line(1, line, 'f.py', config=cfg)
+            assert any(f['type'] == 'pattern:hex credential' for f in findings), line
+
+    def test_genuine_hash_keys_still_suppressed(self):
+        # The documented happy-path hash keys must keep suppressing (these names
+        # carry no credential keyword, so the hash-context guard still applies).
+        cfg = Config(no_color=True)
+        for var in (
+            'commit',
+            'git_commit',
+            'GIT_REV',
+            'checksum',
+            'digest',
+            'integrity',
+            'md5',
+            'sha256',
+            'config_hash',
+        ):
+            line = f'{var} = "{self._HEX32}"'
+            assert scan_line(1, line, 'f.py', config=cfg) == [], line
+
+    def test_hash_key_does_not_suppress_unrelated_secret_on_same_line(self):
+        # Collateral suppression: a hash-context key (commit=...) elsewhere on a
+        # multi-assignment line must NOT suppress an unrelated real secret. The
+        # apisecret hex value must still flag.
+        cfg = Config(no_color=True)
+        line = f'commit = "deadbeef"; apisecret = "{self._HEX32}"'
+        findings = scan_line(1, line, 'f.py', config=cfg)
+        assert any(f['type'] == 'pattern:hex credential' for f in findings), line
