@@ -43,10 +43,10 @@ dev = [
 credactor = "credactor.cli:main"
 
 [project.urls]
-Repository = "https://github.com/rxb06/Credactor"
-Issues = "https://github.com/rxb06/Credactor/issues"
-Changelog = "https://github.com/rxb06/Credactor/blob/main/CHANGELOG.md"
-Documentation = "https://github.com/rxb06/Credactor/blob/main/docs/manual.md"
+Repository = "https://github.com/rxb06/credactor"
+Issues = "https://github.com/rxb06/credactor/issues"
+Changelog = "https://github.com/rxb06/credactor/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/rxb06/credactor/blob/main/docs/manual.md"
 
 [tool.setuptools.dynamic]
 version = {attr = "credactor.__version__"}
