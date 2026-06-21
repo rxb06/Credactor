@@ -99,7 +99,7 @@ class TestBareTokenVariable:
 
 
 class TestTxtScanning:
-    """.txt is scanned by default as of 2.4.1. The viability of default-on
+    """.txt is scanned by default as of 2.5.0. The viability of default-on
     rests on the hash-pin/quote-prefix guards keeping requirements.txt-style
     content clean — that property is load-bearing and pinned here."""
 
@@ -456,7 +456,7 @@ class TestRecallCoverage:
 
     def test_public_key_and_unrelated_files_not_scanned(self):
         assert not should_scan_file('id_rsa.pub')
-        # .txt is scanned by default as of 2.4.1 (measured clean on prose
+        # .txt is scanned by default as of 2.5.0 (measured clean on prose
         # and hash-pinned requirements; notes files are a real leak vector).
         assert should_scan_file('notes.txt')
         # .md stays out: example-credential-dense by convention — this pin
