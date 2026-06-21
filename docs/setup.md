@@ -18,7 +18,7 @@ pip install credactor
 To install from source so `credactor` works globally from any directory:
 
 ```bash
-git clone https://github.com/rxb06/Credactor.git
+git clone https://github.com/rxb06/credactor.git
 cd Credactor
 pip install -e .
 ```
@@ -45,10 +45,10 @@ pip uninstall credactor
 
 ### Run Without Installing
 
-If you just want to run it from the cloned repo without a global install:
+If you want to run it from the cloned repo without a global install:
 
 ```bash
-git clone https://github.com/rxb06/Credactor.git
+git clone https://github.com/rxb06/credactor.git
 cd Credactor
 python -m credactor --help
 ```
@@ -71,7 +71,7 @@ pip install 'credactor[encoding]'
 
 ### Config File
 
-`.credactor.toml` in your project root, or a parent directory up to the repository root (the tool walks upward from the scan target, at most 5 levels). A config discovered **above** the repository root is refused — skipped with an `[ERROR]` on stderr ("Refusing to load config from outside project root"), not silently, unless you point `--config` at it explicitly, and always refused in `--ci` mode.
+`.credactor.toml` in your project root, or a parent directory up to the repository root (the tool walks upward from the scan target, at most 5 levels). A config discovered **above** the repository root is refused. It is skipped with an `[ERROR]` on stderr ("Refusing to load config from outside project root"), not silently, unless you point `--config` at it explicitly, and it is always refused in `--ci` mode.
 
 ```toml
 # .credactor.toml
