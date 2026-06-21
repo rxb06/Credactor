@@ -16,6 +16,7 @@ package directory (`credactor/`), so this gate:
 
 import hashlib
 import os
+import posixpath
 import subprocess
 import sys
 import tarfile
@@ -70,12 +71,17 @@ def _audit_sdist(path: str, pkg: dict[str, str], tracked: set[str]) -> list[str]
             if not (m.isfile() or m.isdir()):
                 errors.append(f'{name}: non-regular member {m.name}')
                 continue
-            if m.name != base and not m.name.startswith(prefix):
+            # Normalize before the containment check: a raw startswith() accepts a
+            # crafted `credactor-X/../evil` member whose normalized path escapes the
+            # sdist root (tar-slip / path traversal). Tar names are always
+            # forward-slash, so posixpath.normpath is correct on every platform.
+            norm = posixpath.normpath(m.name)
+            if norm != base and not norm.startswith(prefix):
                 errors.append(f'{name}: member escapes {prefix}: {m.name}')
                 continue
             if m.isdir():
                 continue
-            rel = m.name[len(prefix) :]
+            rel = norm[len(prefix) :]
             if rel in pkg:
                 seen_pkg.add(rel)
                 extracted = t.extractfile(m)

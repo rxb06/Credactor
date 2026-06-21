@@ -134,6 +134,17 @@ def test_fails_on_unexpected_py_in_sdist(repo, capsys):
     _audit_fails_with(capsys, 'UNEXPECTED')
 
 
+def test_fails_on_sdist_member_escaping_the_root(repo, capsys):
+    # Path traversal: a member named `credactor-X/../payload.pth` starts with the
+    # archive prefix as a raw string but normalizes outside the sdist root. A
+    # startswith()-only check accepted it; it must be rejected as an escape.
+    _wheel(repo, PKG_FILES)
+    extra = dict(PKG_FILES)
+    extra['../payload.pth'] = b'import os; os.system("id")\n'
+    _sdist(repo, extra)
+    _audit_fails_with(capsys, 'member escapes')
+
+
 def test_fails_on_untracked_so_under_credactor_in_sdist(repo, capsys):
     # AW-1: a smuggled compiled extension under credactor/ must not pass the gate.
     _wheel(repo, PKG_FILES)
