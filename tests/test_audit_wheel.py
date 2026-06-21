@@ -80,56 +80,115 @@ def test_passes_on_matching_artifacts(repo):
     audit_wheel.audit('dist')  # no SystemExit means it passed
 
 
-def test_fails_on_altered_wheel_content(repo):
+def _audit_fails_with(capsys, category: str) -> None:
+    """Run the audit, assert it exits non-zero AND reports the given category."""
+    with pytest.raises(SystemExit):
+        audit_wheel.audit('dist')
+    assert category in capsys.readouterr().err
+
+
+def test_fails_on_altered_wheel_content(repo, capsys):
     tampered = dict(PKG_FILES)
     tampered['credactor/core.py'] = b'def run():\n    return 666  # injected\n'
     _wheel(repo, tampered)
     _sdist(repo, PKG_FILES)
-    with pytest.raises(SystemExit):
-        audit_wheel.audit('dist')
+    _audit_fails_with(capsys, 'CONTENT MISMATCH')
 
 
-def test_fails_on_injected_file_in_wheel(repo):
+def test_fails_on_injected_file_in_wheel(repo, capsys):
     extra = dict(PKG_FILES)
     extra['credactor/evil.py'] = b'print("pwned")\n'
     _wheel(repo, extra)
     _sdist(repo, PKG_FILES)
-    with pytest.raises(SystemExit):
-        audit_wheel.audit('dist')
+    # A .py under credactor/ is a package file, so the wheel flags it as not-in-repo.
+    _audit_fails_with(capsys, 'NOT IN REPO')
 
 
-def test_fails_on_missing_file_in_wheel(repo):
+def test_fails_on_missing_file_in_wheel(repo, capsys):
     _wheel(repo, {'credactor/__init__.py': PKG_FILES['credactor/__init__.py']})
     _sdist(repo, PKG_FILES)
-    with pytest.raises(SystemExit):
-        audit_wheel.audit('dist')
+    _audit_fails_with(capsys, 'MISSING FROM WHEEL')
 
 
-def test_fails_on_unexpected_toplevel_in_wheel(repo):
+def test_fails_on_unexpected_toplevel_in_wheel(repo, capsys):
     smuggled = dict(PKG_FILES)
     smuggled['evil.py'] = b'print("pwned")\n'
     _wheel(repo, smuggled)
     _sdist(repo, PKG_FILES)
-    with pytest.raises(SystemExit):
-        audit_wheel.audit('dist')
+    _audit_fails_with(capsys, 'UNEXPECTED')
 
 
-def test_fails_on_altered_sdist_content(repo):
+def test_fails_on_altered_sdist_content(repo, capsys):
     _wheel(repo, PKG_FILES)
     tampered = dict(PKG_FILES)
     tampered['credactor/core.py'] = b'def run():\n    return 0  # injected\n'
     _sdist(repo, tampered)
-    with pytest.raises(SystemExit):
-        audit_wheel.audit('dist')
+    _audit_fails_with(capsys, 'CONTENT MISMATCH')
 
 
-def test_fails_on_unexpected_py_in_sdist(repo):
+def test_fails_on_unexpected_py_in_sdist(repo, capsys):
     _wheel(repo, PKG_FILES)
     extra = dict(PKG_FILES)
     extra['hack.py'] = b'print("pwned")\n'
     _sdist(repo, extra)
-    with pytest.raises(SystemExit):
-        audit_wheel.audit('dist')
+    _audit_fails_with(capsys, 'UNEXPECTED')
+
+
+def test_fails_on_untracked_so_under_credactor_in_sdist(repo, capsys):
+    # AW-1: a smuggled compiled extension under credactor/ must not pass the gate.
+    _wheel(repo, PKG_FILES)
+    extra = dict(PKG_FILES)
+    extra['credactor/payload.so'] = b'\x7fELF\x02\x01\x01\x00'
+    _sdist(repo, extra)
+    _audit_fails_with(capsys, 'UNEXPECTED')
+
+
+def test_fails_on_untracked_nested_so_under_credactor_in_sdist(repo, capsys):
+    # AW-1: the strict check must also catch members nested below credactor/.
+    _wheel(repo, PKG_FILES)
+    extra = dict(PKG_FILES)
+    extra['credactor/sub/payload.so'] = b'\x7fELF\x02\x01\x01\x00'
+    _sdist(repo, extra)
+    _audit_fails_with(capsys, 'UNEXPECTED')
+
+
+def test_fails_on_pyc_under_credactor_in_sdist(repo, capsys):
+    # AW-1: bytecode under credactor/ is rejected just as the wheel rejects it.
+    _wheel(repo, PKG_FILES)
+    extra = dict(PKG_FILES)
+    extra['credactor/evil.pyc'] = b'\x00\x00\x00\x00bytecode'
+    _sdist(repo, extra)
+    _audit_fails_with(capsys, 'UNEXPECTED')
+
+
+def test_fails_on_py_under_egg_info_in_sdist(repo, capsys):
+    # AW-2: a hand-authored .py nested under an *.egg-info/ path must be flagged, not
+    # exempted by an unanchored substring match.
+    _wheel(repo, PKG_FILES)
+    extra = dict(PKG_FILES)
+    extra['credactor.egg-info/evil.py'] = b'print("pwned")\n'
+    _sdist(repo, extra)
+    _audit_fails_with(capsys, 'UNEXPECTED')
+
+
+def test_fails_on_py_under_nested_egg_info_in_sdist(repo, capsys):
+    # AW-2: the substring hole was exploitable at any depth under any *.egg-info dir.
+    _wheel(repo, PKG_FILES)
+    extra = dict(PKG_FILES)
+    extra['x.egg-info/sub/evil.py'] = b'print("pwned")\n'
+    _sdist(repo, extra)
+    _audit_fails_with(capsys, 'UNEXPECTED')
+
+
+def test_passes_on_benign_egg_info_metadata(repo):
+    # AW-2 must not over-reach: genuine egg-info bookkeeping text files still pass.
+    _wheel(repo, PKG_FILES)
+    extra = dict(PKG_FILES)
+    extra['credactor.egg-info/SOURCES.txt'] = b'credactor/__init__.py\ncredactor/core.py\n'
+    extra['credactor.egg-info/top_level.txt'] = b'credactor\n'
+    extra['credactor.egg-info/dependency_links.txt'] = b'\n'
+    _sdist(repo, extra)
+    audit_wheel.audit('dist')  # no SystemExit means it passed
 
 
 def test_fails_on_missing_sdist(repo):

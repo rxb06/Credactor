@@ -10,7 +10,8 @@ package directory (`credactor/`), so this gate:
     against `git show HEAD:<path>`, so a build that injected or altered code is
     caught (a file-name check alone would miss an in-place edit);
   * confirms no tracked `credactor/` file is missing from either artifact, and
-    no untracked `.py` rides along in the sdist.
+    that the sdist is as strict as the wheel about injected code: any untracked
+    member under `credactor/`, and any untracked `.py` anywhere, is rejected.
 """
 
 import hashlib
@@ -81,12 +82,19 @@ def _audit_sdist(path: str, pkg: dict[str, str], tracked: set[str]) -> list[str]
                 data = extracted.read() if extracted is not None else b''
                 if hashlib.sha256(data).hexdigest() != pkg[rel]:
                     errors.append(f'{name}: CONTENT MISMATCH {rel} (does not match HEAD)')
+            elif rel.startswith('credactor/'):
+                # Inside the package directory but not a tracked package file: as strict as
+                # the wheel, where `members - pkg_files` rejects any credactor/ member that
+                # is not in `pkg` (smuggled .so/.pyc/data, etc.).
+                errors.append(f'{name}: UNEXPECTED {rel}')
+            elif rel.endswith('.py'):
+                # Untracked .py outside the package: real egg-info dirs ship only bookkeeping
+                # text files, never hand-authored modules, so flag every untracked .py.
+                errors.append(f'{name}: UNEXPECTED {rel}')
             elif rel in tracked:
                 # A legitimate tracked non-package file (pyproject, README, LICENSE, ...).
                 continue
-            elif rel.endswith('.py') and '.egg-info/' not in rel:
-                errors.append(f'{name}: UNEXPECTED {rel}')
-            # else: build-generated metadata (PKG-INFO, *.egg-info/, ...), allowed.
+            # else: build-generated metadata (PKG-INFO, *.egg-info/ text files, ...), allowed.
         errors.extend(
             f'{name}: MISSING FROM SDIST {missing}' for missing in sorted(set(pkg) - seen_pkg)
         )
