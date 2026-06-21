@@ -1,7 +1,7 @@
 # Credactor Manual
 
 Complete reference for every flag, mode, and combination. 
-Reflects Credactor 2.4.1 (unreleased; see the [CHANGELOG](../CHANGELOG.md)). For limitations and safe usage see the
+Reflects Credactor 2.5.0 (unreleased; see the [CHANGELOG](../CHANGELOG.md)). For limitations and safe usage see the
 [Disclaimer](DISCLAIMER.md); for the threat model see [Security](security.md).
 
 ---
@@ -230,10 +230,17 @@ Apply to `--fix-all` and interactive redaction. Verified outputs for the line
   quoted assignment — a bare token on its own line, or a secret embedded in a
   larger string (a `Bearer` header, a connection URL): inserting a code
   expression there would break syntax, so the value becomes
-  `REDACTED_BY_CREDACTOR` instead. Such findings still count as *replaced*.
+  `REDACTED_BY_CREDACTOR` instead. This sentinel fallback applies to the
+  **language file types** (`.py`, `.js`, `.rb`), whose env reference is a code
+  expression (`os.environ[…]`, `process.env[…]`, `ENV[…]`). In
+  shell/config/plain-text file types (`.sh`, `.env`, `.yaml`, `.txt`) the env
+  reference is the shell-style `${VAR}` form, which is valid in place, so a bare
+  token there is rewritten to `${VAR}` (e.g. `${GITHUB_TOKEN}`) — and a quoted
+  assignment keeps its quotes (`token = "${GITHUB_TOKEN}"`) — rather than the
+  sentinel. Such findings still count as *replaced*.
   The duplicate-copy sweep also uses the sentinel in env mode, so a single
-  env-mode run can legitimately leave a mix of `os.environ[…]` and sentinel
-  styles in one file.
+  env-mode run can legitimately leave a mix of `os.environ[…]` / `${…}` and
+  sentinel styles in one file.
 - **The duplicate-copy sweep never overrides an adjudication.** When a
   rewritten file still holds exact copies of a redacted value beyond the
   adjudicated findings (e.g. a detector deduplicated a repeated value, or a
@@ -459,8 +466,9 @@ breadcrumbs name the kind: `inline`, `allowlist
 
 ### Inline
 
-`credactor:ignore` in any comment style, **on the same line** as the secret
-(per-line only — a directive on the line above does not carry over):
+`credactor:ignore` in a `#`, `//`, `/* … */`, or `<!-- … -->` comment, **on the
+same line** as the secret (per-line only — a directive on the line above does
+not carry over). Other comment markers (`--`, `;`, `%`) are **not** recognised:
 
 ```python
 test_key = "abc123"  # credactor:ignore
@@ -506,8 +514,12 @@ locations. Verified — each of the following yields 0 findings:
   calls/defs (`get_secret()`, `def get_password(password="default")`), and
   Terraform refs (`var.password`, `local.secret`, `module.db.password`, `data.*`).
 - **Hashes, not secrets** — three cases. (1) A credential-named variable whose
-  name ends in `_hash`, `_hashed`, `_digest`, `_checksum`, `_fingerprint`,
-  `_hmac`, `_encrypted`, or `_cipher` (e.g. `secret_hash`). (2) Hash *values*
+  name ends in `_hash`, `_hashed`, `_digest`, `_checksum`, `_fingerprint`, or
+  `_hmac` (e.g. `secret_hash`). Two further suffixes, `_encrypted` and
+  `_cipher`, suppress the *variable/entropy* detector but **not** the quoted-hex
+  value detector — a quoted hex value on such a variable
+  (`data_cipher = "<hex>"`) still flags as `pattern:hex credential` (medium).
+  (2) Hash *values*
   (`$2b$…` bcrypt, `$argon2id$…`). (3) A quoted hex / high-entropy **value** on
   a line whose key names a hash/digest/checksum/commit/integrity/revision
   field. The key may end in a `_hash`-family suffix, or contain `md5`,
@@ -638,7 +650,7 @@ Verified rules:
 detail; these are the behaviours most likely to surprise.)
 
 - **Recognised file types only.** Credactor scans a fixed extension allowlist
-  (code/config types, plus `.txt` as of 2.4.1); secrets in unrecognised text
+  (code/config types, plus `.txt` as of 2.5.0); secrets in unrecognised text
   types (`.md`, custom) are skipped unless added via `extra_extensions`.
   General-purpose scanners read every file.
 - **False positives are rewritten under `--fix-all`.** Redaction acts on every
