@@ -170,6 +170,28 @@ class TestMainExitCodes:
         assert any('--staged is read-only' in m for m in msgs)
         assert not any('--dry-run takes precedence' in m for m in msgs)
 
+    def test_no_backup_with_secure_backup_dir_warns(self, credactor_caplog):
+        # --no-backup skips backup creation entirely, so --secure-backup-dir is a
+        # silent no-op; the contradiction must be surfaced, not swallowed.
+        _validate_invocation(Config(no_backup=True, secure_backup_dir='/tmp/safe'))
+        assert any(
+            '--no-backup overrides --secure-backup-dir/--secure-delete' in r.getMessage()
+            for r in credactor_caplog.records
+        )
+
+    def test_no_backup_with_secure_delete_warns(self, credactor_caplog):
+        _validate_invocation(Config(no_backup=True, secure_delete=True))
+        assert any(
+            '--no-backup overrides --secure-backup-dir/--secure-delete' in r.getMessage()
+            for r in credactor_caplog.records
+        )
+
+    def test_secure_backup_dir_without_no_backup_does_not_warn(self, credactor_caplog):
+        # The normal secure-backup configuration (no --no-backup) is not a
+        # contradiction and must stay quiet.
+        _validate_invocation(Config(secure_backup_dir='/tmp/safe', secure_delete=True))
+        assert not any('--no-backup overrides' in r.getMessage() for r in credactor_caplog.records)
+
     def test_missing_explicit_config_exits_2(self, tmp_dir, credactor_caplog):
         # An explicit --config that doesn't exist must be fatal: silently
         # scanning at default sensitivity would drop every intended setting

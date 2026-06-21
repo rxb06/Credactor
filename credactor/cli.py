@@ -391,6 +391,16 @@ def _validate_invocation(config: Config) -> None:
             )
         config.dry_run = True
 
+    if config.no_backup and (config.secure_backup_dir or config.secure_delete):
+        # --no-backup means no .bak is ever written (redactor skips _create_backup),
+        # so --secure-backup-dir/--secure-delete become silent no-ops. Surface the
+        # ignored secure intent so a user expecting a secured out-of-repo backup
+        # isn't left with no backup at all.
+        logger.warning(
+            '--no-backup overrides --secure-backup-dir/--secure-delete; '
+            'no backup will be created, so those flags have no effect.',
+        )
+
     if hasattr(os, 'getuid') and os.getuid() == 0:
         logger.warning(
             'Running as root — backup files may have restrictive ownership. '
