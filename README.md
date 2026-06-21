@@ -140,7 +140,7 @@ A security tool earns trust by being safe to install, not only safe to run. Cred
 - **The artifacts must match the source.** On every push and before every publish, `scripts/audit_wheel.py` checks both the wheel and the sdist against the committed source: every `credactor/` file is compared byte for byte (sha256) to its `git HEAD` blob, and an added, missing, or altered package file, an unexpected file in the wheel, a stray `.py` in the sdist, or no artifact at all fails the gate. A build step cannot inject or alter the package's code without being caught.
 - **Token-less publishing.** Releases reach PyPI through OIDC Trusted Publishing from a dedicated `pypi` environment, with no long-lived API token stored in the repo, and request signed build-provenance attestations (PEP 740 / Sigstore).
 - **No mis-versioned release.** A pre-publish step blocks the upload unless `credactor.__version__` matches the release tag (compared with PEP 440 normalisation).
-- **Pinned, least-privilege CI.** GitHub Actions are pinned to commit SHAs (the PyPI publisher follows PyPA's recommended `release/v1` ref), and workflow tokens stay narrow: `contents: read` by default, with `id-token: write` granted only to the publish job.
+- **Pinned, least-privilege CI.** GitHub Actions are pinned to commit SHAs, and workflow tokens stay narrow: `contents: read` by default, with `id-token: write` granted only to the publish job.
 - **Pins stay fresh.** Dependabot opens monthly grouped pull requests to update the pinned Actions and regenerate the hash-locked lockfile, so the frozen toolchain gets reviewed rather than left to rot.
 
 ## Docs

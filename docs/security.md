@@ -121,7 +121,7 @@ This hardening shipped in **2.4.0** (Python 3.11+, uses stdlib `tomllib`).
 ## Supply Chain Hardening
 
 - **Artifact integrity audit:** `scripts/audit_wheel.py` verifies the wheel and sdist against the committed source: every `credactor/` file is hashed (sha256) against its `git HEAD` blob, and an extra file, a missing tracked file, an unexpected `.py` in the sdist, or no artifact at all each fail the gate.
-- **SHA-pinned GitHub Actions:** All `uses:` references pin to commit SHAs, except `pypa/gh-action-pypi-publish`, which is referenced at the `release/v1` branch ref per PyPA's published guidance for that action.
+- **SHA-pinned GitHub Actions:** All `uses:` references pin to commit SHAs, including `pypa/gh-action-pypi-publish`.
 - **Hash-pinned CI dependencies:** Installed with `pip install --require-hashes`. This covers the build backend too: release artifacts are built with `python -m build --no-isolation` against the hash-pinned setuptools, not a backend downloaded fresh at publish time.
 - **OIDC trusted publishing:** Short-lived tokens tied to this specific repo and workflow.
 - **Sigstore attestations:** Published wheels include cryptographic provenance.
