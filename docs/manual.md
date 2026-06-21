@@ -269,7 +269,7 @@ it. Verified behaviour:
 |-------|--------------------|------------------|-----------------|
 | *(default)* | yes (contains the original secret) | next to the file | kept — delete manually |
 | `--no-backup` | **no** | — | original is lost unless in git |
-| `--secure-backup-dir DIR` | no | moved into `DIR` | kept in `DIR` |
+| `--secure-backup-dir DIR` | no | written into `DIR` as `<name>.<hash>.bak` | kept in `DIR` |
 | `--secure-delete` | created then wiped | next to the file | overwritten with random bytes, deleted |
 
 - **`--secure-backup-dir` fails closed.** If the directory is unwritable, or its
@@ -293,6 +293,18 @@ The `.bak` is your undo (verified):
 ```bash
 diff src/config.py.bak src/config.py   # see exactly what changed
 mv   src/config.py.bak src/config.py   # restore the original
+```
+
+With `--secure-backup-dir DIR`, the backup lives in `DIR` rather than beside the
+file, and its name carries a short hash of the original path
+(`config.py.<hash>.bak`) so two files with the same basename in different
+directories never overwrite each other's backup. Recover by matching on that
+basename (use `diff` to confirm the right copy before restoring):
+
+```bash
+ls DIR/config.py.*.bak                          # find the backup(s) for that file
+diff DIR/config.py.<hash>.bak src/config.py     # confirm it is the right copy
+cp   DIR/config.py.<hash>.bak src/config.py     # restore the original
 ```
 
 With `--no-backup` or `--secure-delete` there is no `.bak` — recover from git:
