@@ -133,7 +133,7 @@ Plus `.env.*` / `.env-*` variants (`.env.local`, `.env.production`) and SSH / pr
 
 ## Supply-chain hardening
 
-A security tool earns trust by being safe to install, not only safe to run. Credactor's build and release pipeline is hardened end to end, and the artifacts are audited on every push, not just at release. Full detail in the [Security doc](https://github.com/rxb06/credactor/blob/main/docs/security.md#supply-chain-hardening).
+A security tool earns trust by being safe to install, not only safe to run. Credactor's build and release pipeline has controls at each step, and the artifacts are audited on every push, not just at release. Full detail in the [Security doc](https://github.com/rxb06/credactor/blob/main/docs/security.md#supply-chain-hardening).
 
 - **Nothing to vet at install time.** Credactor declares zero runtime dependencies, so a default `pip install credactor` pulls in no third-party packages (the only add-on is the optional `[encoding]` extra).
 - **Hash-pinned toolchain.** CI and build steps install from a `pip-compile --generate-hashes` lockfile via `pip install --require-hashes`, so a tampered dependency artifact fails the build. The build backend is covered too: releases run `python -m build --no-isolation` against a hash-pinned setuptools instead of fetching the backend fresh at publish time.
