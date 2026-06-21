@@ -6,7 +6,7 @@ Thanks for your interest in Credactor. Bug reports, feature requests, and pull r
 
 ```bash
 git clone https://github.com/rxb06/credactor.git
-cd Credactor
+cd credactor
 pip install -e ".[dev,encoding]"
 ```
 

@@ -224,7 +224,7 @@ def sarif_report(findings: list[Finding], root: str) -> str:
                     'driver': {
                         'name': 'Credactor',
                         'version': __version__,
-                        'informationUri': 'https://github.com/rxb06/Credactor',
+                        'informationUri': 'https://github.com/rxb06/credactor',
                         'rules': list(rules.values()),
                     },
                 },

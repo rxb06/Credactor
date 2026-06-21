@@ -219,9 +219,12 @@ Apply to `--fix-all` and interactive redaction. Verified outputs for the line
   finding (a `ghp_…` token) → `os.environ["GITHUB_TOKEN"]`. Verified for Python
   (`os.environ[...]`), JS (`process.env[...]`), Ruby (`ENV[...]`); Java/Go/PHP
   forms are covered by the test suite.
-- **Replacement is validated** (allowlist `[A-Za-z0-9_-]`): a dangerous value
+- **Replacement is validated** (allowlist `[A-Za-z0-9_-]+`): a dangerous value
   (`bad;rm -rf`, markup, newlines, control chars) is **rejected with exit 2**
-  (verified). This guards against injection into rewritten files.
+  (verified). This guards against injection into rewritten files. An **empty**
+  `--replacement` (e.g. from an unset shell variable) is **also rejected with
+  exit 2**: the allowlist requires `+` (one or more), so an empty value cannot
+  silently excise the secret with no marker.
 - Env-mode output is syntactically valid: a redacted `.py`/`.js`/`.rb` still
   parses (verified). Note it emits an env **reference** (e.g. `os.environ["KEY"]`),
   not the import it needs — add the matching import (e.g. `import os`) if the file

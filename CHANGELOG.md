@@ -26,7 +26,7 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 - A `.github/dependabot.yml` (monthly: github-actions and pip) to keep the SHA/hash-pinned CI dependencies refreshed.
 - A `.pre-commit-config.yaml` for this repo's developers (ruff, mypy strict, and the credactor self-scan).
 - PyPI sidebar links: `[project.urls]` now declares Issues, Changelog, and Documentation alongside Repository.
-- The build-artifact audit (`scripts/audit_wheel.py`) now verifies the **wheel and sdist** against the committed source: every `credactor/` file is content-hashed (sha256) against its `git HEAD` blob, and an added, missing, or altered package file, an unexpected file in the wheel, a stray `.py` in the sdist, or no artifact at all fails the gate. Byte-level comparison catches an in-place code edit that the previous file-name check would have missed.
+- The build-artifact audit (`scripts/audit_wheel.py`) now verifies the **wheel and sdist** against the committed source: every `credactor/` file is content-hashed (sha256) against its `git HEAD` blob, and an added, missing, or altered package file, any untracked member in the wheel, any untracked `credactor/` member or stray `.py` in the sdist, or no artifact at all fails the gate. Byte-level comparison catches an in-place code edit that the previous file-name check would have missed.
 - Test coverage for three previously untested core paths: the interactive redaction flow, `--scan-json` end-to-end, and the non-UTF-8 (Latin-1) redaction round-trip.
 - Unknown top-level keys in `.credactor.toml` now log a warning instead of being dropped silently (a typo such as `entropy_treshold` could otherwise scan at the wrong sensitivity unnoticed). The guard also covers the `[ingest]` table.
 - A single-file target (`credactor app.py`) that finds a `.credactorignore` beside it now warns, since an allowlist file applies only to a directory scan.
@@ -34,7 +34,7 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 ### Fixed
 
-- Redaction now refuses a symlinked target (warns and skips) rather than following the link and rewriting a file outside the one named. `--secure-backup-dir` backups are written directly inside the target directory, with no transient plaintext `.bak` beside the original.
+- Redaction now refuses a symlinked target (warns and skips) rather than following the link and rewriting a file outside the one named. `--secure-backup-dir` backups are written directly inside the directory you pass (never beside the original, even momentarily), and each backup name is made unique per source path so two same-named files in different directories cannot clobber each other's backup.
 - An empty or non-allowlisted `--replacement` is now rejected (exit 2) before any file is touched, instead of deleting the secret or injecting characters that could corrupt surrounding code.
 - Quoted hex/Base64 values on a line keyed like a commit SHA, checksum, SRI integrity, digest, or revision field are no longer auto-rewritten under `--fix-all`; they are hash outputs, not credentials. A genuinely credential-named value is still flagged.
 - The connection-string detector now matches in linear time on adversarial input, closing a ReDoS backtracking path.
@@ -61,6 +61,7 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 - `--staged` now honours `--scan-json`: a staged `.json` file is scanned with the flag and skipped without it, matching the directory walk. Lockfiles remain excluded either way.
 - Git subprocess output is decoded as UTF-8 explicitly, so non-ASCII staged filenames are scanned on Windows instead of being mojibaked into the error list. History-scan decoding degrades stray bytes to U+FFFD rather than crashing.
 - Staged blob content is universal-newline normalised before scanning, so CRLF blobs no longer leak literal `\r` into previews and lone-`\r` endings no longer skew multiline line numbers.
+- The `--staged` pre-commit scan now enforces the same 50 MB file-size cap as the working-tree scan, and emits the same encoding warning on a NUL-bearing file whose encoding it cannot confirm, so the staged path is no longer a silently quieter false negative than the tree scan.
 - README links now use absolute GitHub URLs; the relative links resolved against pypi.org (the README is the PyPI landing page) and returned 404s.
 - The published sdist no longer ships a partial copy of the test suite (a new `MANIFEST.in` prunes `tests/`); the wheel was never affected.
 - `build-system.requires` now demands `setuptools>=77`, the first version that understands the PEP 639 SPDX `license` string; the obsolete `wheel` requirement is dropped.
@@ -74,11 +75,13 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 - Removed an unreachable "unsafe replacement" regex guard in the redactor; the `re.sub` sanitiser on `[A-Za-z0-9_]`-stripped env names is the actual defence.
 - `_log.configure` no longer takes an unused `no_color` parameter (log output has no colour).
 - `--replacement` combined with `--replace-with env` now warns that the fixed string is never consulted, instead of silently ignoring it.
+- Combining `--no-backup` with `--secure-backup-dir`/`--secure-delete` now warns that no backup is created, so those flags have no effect.
 - The 'clean scan' message now has a single owner (`cli._emit_report`); the drifted duplicate in `report.print_report` was removed.
 - CI now runs on the `develop` branch (push and pull request), where day-to-day work happens; previously only `main` was checked.
 - `make lint` now runs the type checker as well as ruff, matching CI; CONTRIBUTING was aligned and no longer claims the code is auto-formatted (it is linted, not formatted).
 - The version is single-sourced from `credactor.__version__` (pyproject declares `dynamic = ["version"]`), so pip metadata and `credactor --version` cannot drift apart.
 - CI and publish builds run `python -m build --no-isolation` with setuptools hash-pinned in `requirements-ci.txt`, extending supply-chain pinning to the build backend.
+- The PyPI publish action (`pypa/gh-action-pypi-publish`) is now pinned to a commit SHA like every other action, rather than a mutable `@release/v1` branch ref.
 - Docs: clarified that external-scanner ingestion currently supports Gitleaks and TruffleHog, with more detectors planned (correcting wording that implied any scanner).
 - The CHANGELOG preamble states the project's one SemVer exception explicitly: dropping a near-end-of-life Python version may happen in a minor release (always flagged BREAKING), as in 2.4.0.
 
@@ -86,7 +89,7 @@ below the release that dropped it (2.4.0 dropped Python 3.10, so:
 
 - The scanning thread pool. Detection is regex-CPU-bound and serialised by the GIL, so the 8-worker pool measured only 1.0-1.3x while carrying the project's trickiest code (a lock, a futures map, an EMFILE retry). Scanning is now sequential, and file-descriptor exhaustion is impossible by construction.
 - The interactive `.json` file picker. `--scan-json` is already the explicit opt-in, so the numbered prompt was a redundant second gate (~70 lines); all modes now scan every collected `.json` uniformly. Note: a non-TTY `--scan-json` run without `--ci`/`--dry-run` previously hit EOF at the picker and silently skipped JSON (exit 0); it now scans them and exits 1.
-- Internal simplifications with no behaviour change (a test-only `.gitignore` duplicate, the `log_verbose` wrapper, scanner config aliases, an unused `_evaluate_candidate` parameter, and several unreachable guards).
+- Internal simplifications with no behaviour change (a test-only `.gitignore` duplicate, the `log_verbose` wrapper, scanner config aliases, an unused `_evaluate_candidate` parameter, several unreachable guards, and the opportunistic `chardet` encoding-detection tier, which was never a declared dependency).
 - The legacy repo-root `credential_redactor.py` shim; it was never shipped and nothing referenced it. `credactor` and `python -m credactor` cover every documented invocation.
 
 ## [2.4.0] - 2026-06-07
@@ -277,10 +280,10 @@ superseded. Resolvers will only select **2.3.3** (the last release supporting
 Python 3.10 — see the versioning note above) or **2.4.0+**; yanked versions
 remain installable solely via exact `==` pins.
 
-[2.5.0]: https://github.com/rxb06/Credactor/compare/v2.4.0...v2.5.0
-[2.4.0]: https://github.com/rxb06/Credactor/compare/v2.3.3...v2.4.0
-[2.3.3]: https://github.com/rxb06/Credactor/compare/v2.3.2...v2.3.3
-[2.3.2]: https://github.com/rxb06/Credactor/compare/v2.3.0...v2.3.2
-[2.3.0]: https://github.com/rxb06/Credactor/compare/v2.2.1...v2.3.0
-[2.2.1]: https://github.com/rxb06/Credactor/compare/v2.2.0...v2.2.1
-[2.2.0]: https://github.com/rxb06/Credactor/releases/tag/v2.2.0
+[2.5.0]: https://github.com/rxb06/credactor/compare/v2.4.0...v2.5.0
+[2.4.0]: https://github.com/rxb06/credactor/compare/v2.3.3...v2.4.0
+[2.3.3]: https://github.com/rxb06/credactor/compare/v2.3.2...v2.3.3
+[2.3.2]: https://github.com/rxb06/credactor/compare/v2.3.0...v2.3.2
+[2.3.0]: https://github.com/rxb06/credactor/compare/v2.2.1...v2.3.0
+[2.2.1]: https://github.com/rxb06/credactor/compare/v2.2.0...v2.2.1
+[2.2.0]: https://github.com/rxb06/credactor/releases/tag/v2.2.0
