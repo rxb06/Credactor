@@ -31,7 +31,7 @@ db_password = os.environ["DB_PASSWORD"]
 
 - **Redaction, not just detection.** Most scanners stop at the finding. Credactor replaces the secret in place: a loud `REDACTED_BY_CREDACTOR` sentinel that fails at runtime by default, or a language-aware environment-variable reference (Python, JavaScript/TypeScript, Go, Java/Kotlin, Ruby, PHP, and shell) such as `os.environ["KEY"]`. The replacement is valid code. If the file does not already include the matching import (for example `import os`), add it.
 - **Safe by default.** Atomic writes, automatic `.bak` backups, symlink-boundary and file-permission guards, and full-secret masking in every output. If a safe backup cannot be written, Credactor skips the file rather than rewrite it blind. Your tree is never left in a worse state than it started.
-- **Zero runtime dependencies.** Pure Python 3.11+ standard library. Nothing extra to vet, no supply chain to trust. An optional extra adds detection for non-UTF-8 encodings.
+- **Zero runtime dependencies.** Pure Python 3.11+ standard library, plus an optional extra for non-UTF-8 encodings.
 - **Built for the pipeline.** SARIF output for GitHub Code Scanning, a read-only `--ci` gate with precise exit codes, a pre-commit hook (beta), and ingestion of Gitleaks or TruffleHog reports (BETA, with more on the way). Detect with anything, remediate with Credactor.
 
 ## Install
@@ -131,7 +131,7 @@ Plus `.env.*` / `.env-*` variants (`.env.local`, `.env.production`) and SSH / pr
 
 ## Supply-chain hardening
 
-A security tool earns trust by being safe to install, not only safe to run. Credactor's build and release pipeline is hardened end to end, and the wheel is audited on every push, not just at release. Full detail in the [Security doc](https://github.com/rxb06/credactor/blob/main/docs/security.md#supply-chain-hardening).
+A security tool earns trust by being safe to install, not only safe to run. Credactor's build and release pipeline is hardened end to end, and the artifacts are audited on every push, not just at release. Full detail in the [Security doc](https://github.com/rxb06/credactor/blob/main/docs/security.md#supply-chain-hardening).
 
 - **Nothing to vet at install time.** Credactor declares zero runtime dependencies, so a default `pip install credactor` pulls in no third-party packages (the only add-on is the optional `[encoding]` extra).
 - **Hash-pinned toolchain.** CI and build steps install from a `pip-compile --generate-hashes` lockfile via `pip install --require-hashes`, so a tampered dependency artifact fails the build. The build backend is covered too: releases run `python -m build --no-isolation` against a hash-pinned setuptools instead of fetching the backend fresh at publish time.
