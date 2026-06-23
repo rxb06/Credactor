@@ -55,7 +55,13 @@ def _wheel(repo: Path, files: dict[str, bytes], *, dist_info: bool = True) -> Pa
     return path
 
 
-def _sdist(repo: Path, files: dict[str, bytes], *, metadata: bool = True) -> Path:
+def _sdist(
+    repo: Path,
+    files: dict[str, bytes],
+    *,
+    metadata: bool = True,
+    pyproject: bytes = b'[project]\nname = "credactor"\n',
+) -> Path:
     path = repo / 'dist' / f'credactor-{VERSION}.tar.gz'
     prefix = f'credactor-{VERSION}'
     with tarfile.open(path, 'w:gz') as t:
@@ -69,7 +75,7 @@ def _sdist(repo: Path, files: dict[str, bytes], *, metadata: bool = True) -> Pat
             add(name, data)
         if metadata:
             add('PKG-INFO', b'Name: credactor\n')
-            add('pyproject.toml', b'[project]\nname = "credactor"\n')
+            add('pyproject.toml', pyproject)
             add('README.md', b'# credactor\n')
     return path
 
@@ -143,6 +149,24 @@ def test_fails_on_sdist_member_escaping_the_root(repo, capsys):
     extra['../payload.pth'] = b'import os; os.system("id")\n'
     _sdist(repo, extra)
     _audit_fails_with(capsys, 'member escapes')
+
+
+def test_fails_on_tampered_tracked_nonpackage_in_sdist(repo, capsys):
+    # A tracked non-package file shipped in the sdist (here pyproject.toml) must
+    # match HEAD byte-for-byte, not pass on its name alone: an sdist install builds
+    # from its pyproject.toml, so a tampered build config (e.g. a malicious build
+    # dependency) would otherwise build unreviewed.
+    _wheel(repo, PKG_FILES)
+    _sdist(repo, PKG_FILES, pyproject=b'[build-system]\nrequires = ["setuptools", "evil"]\n')
+    _audit_fails_with(capsys, 'CONTENT MISMATCH')
+
+
+def test_passes_on_matching_tracked_nonpackage_in_sdist(repo):
+    # The byte-check must not over-reach: a tracked non-package file whose bytes
+    # match HEAD still passes (the fixture commits this exact pyproject.toml).
+    _wheel(repo, PKG_FILES)
+    _sdist(repo, PKG_FILES)  # default pyproject/README match the committed bytes
+    audit_wheel.audit('dist')  # no SystemExit means it passed
 
 
 def test_fails_on_untracked_so_under_credactor_in_sdist(repo, capsys):

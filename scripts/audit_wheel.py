@@ -9,6 +9,9 @@ package directory (`credactor/`), so this gate:
   * compares every `credactor/` file in BOTH artifacts, byte for byte (sha256),
     against `git show HEAD:<path>`, so a build that injected or altered code is
     caught (a file-name check alone would miss an in-place edit);
+  * byte-compares any tracked non-package file the sdist ships (pyproject.toml,
+    README, LICENSE, ...) against HEAD too, so a tampered build config cannot ride
+    along in a source distribution;
   * confirms no tracked `credactor/` file is missing from either artifact, and
     that the sdist is as strict as the wheel about injected code: any untracked
     member under `credactor/`, and any untracked `.py` anywhere, is rejected.
@@ -59,6 +62,11 @@ def _audit_wheel(path: str, pkg: dict[str, str]) -> list[str]:
     return errors
 
 
+def _member_sha256(t: tarfile.TarFile, m: tarfile.TarInfo) -> str:
+    extracted = t.extractfile(m)
+    return hashlib.sha256(extracted.read() if extracted is not None else b'').hexdigest()
+
+
 def _audit_sdist(path: str, pkg: dict[str, str], tracked: set[str]) -> list[str]:
     errors: list[str] = []
     name = os.path.basename(path)
@@ -84,9 +92,7 @@ def _audit_sdist(path: str, pkg: dict[str, str], tracked: set[str]) -> list[str]
             rel = norm[len(prefix) :]
             if rel in pkg:
                 seen_pkg.add(rel)
-                extracted = t.extractfile(m)
-                data = extracted.read() if extracted is not None else b''
-                if hashlib.sha256(data).hexdigest() != pkg[rel]:
+                if _member_sha256(t, m) != pkg[rel]:
                     errors.append(f'{name}: CONTENT MISMATCH {rel} (does not match HEAD)')
             elif rel.startswith('credactor/'):
                 # Inside the package directory but not a tracked package file: as strict as
@@ -98,8 +104,15 @@ def _audit_sdist(path: str, pkg: dict[str, str], tracked: set[str]) -> list[str]
                 # text files, never hand-authored modules, so flag every untracked .py.
                 errors.append(f'{name}: UNEXPECTED {rel}')
             elif rel in tracked:
-                # A legitimate tracked non-package file (pyproject, README, LICENSE, ...).
-                continue
+                # A tracked non-package file (pyproject.toml, README, LICENSE, ...). Verify
+                # its bytes against HEAD too, not just its name: an sdist install builds from
+                # its pyproject.toml, so a tampered build config (e.g. a malicious build
+                # dependency) must not ride along unreviewed.
+                head_sha = hashlib.sha256(
+                    subprocess.check_output(['git', 'show', f'HEAD:{rel}'])
+                ).hexdigest()
+                if _member_sha256(t, m) != head_sha:
+                    errors.append(f'{name}: CONTENT MISMATCH {rel} (does not match HEAD)')
             # else: build-generated metadata (PKG-INFO, *.egg-info/ text files, ...), allowed.
         errors.extend(
             f'{name}: MISSING FROM SDIST {missing}' for missing in sorted(set(pkg) - seen_pkg)
