@@ -13,7 +13,7 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 
 - **Obfuscated credentials:** Base64-encoded secrets, encrypted blobs (other than SOPS), or credentials split across multiple files.
 - **Runtime secrets:** Credentials injected via environment variables, secret managers, or APIs at runtime are intentionally ignored (these are the *correct* pattern).
-- **Binary files:** Only text-based source files are scanned; binary formats (`.exe`, `.zip`, `.png`, etc.) are skipped.
+- **Binary files:** During a directory scan, only files with recognised source and config extensions are read, so binary formats (`.exe`, `.zip`, `.png`, etc.) are skipped, by extension and not by binary-content detection. A binary file named directly on the command line bypasses that filter: it is still read (decoded as latin-1, with a warning) and scanned, so naming one is not a reliable way to exclude it. Credactor is not built to find secrets embedded in binaries.
 - **Determined adversaries:** An attacker with write access to your codebase could craft evasion patterns. Credactor is a safety net, not a security boundary.
 
 ## Trust Boundaries
@@ -95,8 +95,6 @@ Credactor is a **developer-side static analysis tool** that scans source files f
 - **SEC-38**: Config type confusion. Wrap `float()`/`int()` conversions in `apply_config_file()` with try/except. Prevents scan crash (DoS) from malformed `.credactor.toml` values.
 - **SEC-39**: Config trust boundary (non-git). When no `.git` directory exists, fall back to comparing config location against the scan root. Prevents silent config loading from parent directories on non-git repos.
 
-See `mydocs/vulnerability-chains.md` for the full chain analysis including attack narratives, scope, and false positives investigated.
-
 ### v2.4.0 (Phase 1–3 hardening + external ingestion)
 
 **External-scanner ingestion (BETA), `credactor/ingest.py`:**
@@ -161,7 +159,7 @@ This hardening shipped in **2.5.0**.
 
 ## Supply Chain Hardening
 
-- **Artifact integrity audit:** `scripts/audit_wheel.py` verifies the wheel and sdist against the committed source: every `credactor/` file — and every tracked non-package file the sdist ships (`pyproject.toml`, `README`, `LICENSE`) — is hashed (sha256) against its `git HEAD` blob, and an extra file, a missing tracked file, an unexpected `.py` in the sdist, an sdist member whose path escapes the archive root, or no artifact at all each fail the gate. Byte-level comparison catches an in-place edit a file-name check would miss, and verifying the sdist's build config means a tampered `pyproject.toml` cannot ride along in a source distribution.
+- **Artifact integrity audit:** `scripts/audit_wheel.py` verifies the wheel and sdist against the committed source. Every `credactor/` file, and every tracked non-package file the sdist ships (`pyproject.toml`, `README`, `LICENSE`), is hashed (sha256) against its `git HEAD` blob, so an in-place edit a file-name check would miss is caught and a tampered `pyproject.toml` cannot ride along in a source distribution. The wheel is treated as a closed set and its `.dist-info` metadata is content-checked, so an injected install-time dependency (`Requires-Dist`), a repointed console entry point, or an altered top-level module is rejected, and a bundled licence must match `HEAD`. The gate also rejects duplicate archive members, an unexpected or untracked file in either artifact, an sdist member whose path escapes the archive root, and any build that does not produce exactly one wheel and one sdist.
 - **Version-tag gate:** the publish workflow blocks an upload unless `credactor.__version__` matches the release tag (PEP 440 normalised), so a mis-versioned release cannot reach PyPI.
 - **SHA-pinned GitHub Actions:** All `uses:` references pin to commit SHAs, including `pypa/gh-action-pypi-publish`.
 - **Hash-pinned CI dependencies:** Installed with `pip install --require-hashes`. This covers the build backend too: release artifacts are built with `python -m build --no-isolation` against the hash-pinned setuptools, not a backend downloaded fresh at publish time.
